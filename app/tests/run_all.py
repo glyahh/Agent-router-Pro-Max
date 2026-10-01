@@ -16,6 +16,9 @@ CASES = [
     ('保存路由端到端', 'test_multi_source_save.py'),
     ('Agent 适配器（5 个客户端）', 'test_agents.py'),
     ('加固（重定向 / 预检闸门 / auth 补偿）', 'test_hardening.py'),
+    ('HTTP 层（安全闸 / body 纪律 / 错误映射）', 'test_server_http.py'),
+    ('health 聚合层（假 payload 注入）', 'test_health_payload.py'),
+    ('启动路径（main.py 纯逻辑）', 'test_main_startup.py'),
 ]
 
 
