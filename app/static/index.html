@@ -62,9 +62,8 @@
          如果 app.js 没跑起来（脚本 404 / 被拦），这段就是用户看到的东西，不能是白的 -->
     <div class="statebox" id="boot">
       <span class="ic"><svg class="ui-icon icon-spin" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.6" fill="none" stroke-dasharray="28" stroke-dashoffset="10" stroke-linecap="round"/></svg></span>
-      <span class="t">正在启动控制台界面…</span>
-      <span class="d">若长时间停在这里，说明 <b>app.js</b> 没有加载成功。<br>
-        确认静态目录下存在 app.js / app.css，然后刷新页面。</span>
+      <span class="t">正在启动界面…</span>
+      <span class="d">若长时间未加载，请刷新页面重试。</span>
     </div>
   </main>
 
@@ -86,9 +85,8 @@
 <noscript>
   <div class="statebox">
     <span class="ic"><svg class="ui-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><circle cx="8" cy="8" r="6.2" stroke="currentColor" stroke-width="1.3" fill="none"/><line x1="8" y1="4.5" x2="8" y2="8.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="11.5" r=".9" fill="currentColor"/></svg></span>
-    <span class="t">浏览器禁用了 JavaScript</span>
-    <span class="d">Prism 的界面由 app.js 渲染，禁用脚本后无法显示任何数据。<br>
-      请在 WebView2 / 浏览器设置里启用 JavaScript 后重新打开。</span>
+    <span class="t">需启用 JavaScript</span>
+    <span class="d">请在运行环境中启用 JavaScript 支持。</span>
   </div>
 </noscript>
 

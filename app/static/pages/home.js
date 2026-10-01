@@ -14,7 +14,7 @@
  * ── 这一页的范围（别处重复了就删）─────────────────────────────────────
  * 去掉：原来那张 9 列的「所有来源」表。它的排序/统计能力在**监控页**已经有了
  *       （monitor.js 的 sourcesSection），首页不再摆第二份。
- * 保留：底部「＋ 添加供应商」表单。
+ * 保留：底部「＋ 添加来源」表单。
  * 新增：节点树、内联的来源动作（测试/编辑/删除/改渠道头）、Agent 接入。
  *
  * ── 三个容易改错的点（都写在 docs/DEV-RULES.md 里）────────────────────
@@ -103,7 +103,8 @@
     '.home .home-global-filter{background:var(--panel);border:1px solid var(--line2);border-radius:var(--r-ctl);padding:7px 11px;font-size:13px;color:var(--fg);width:100%;outline:none;transition:border-color .15s ease}',
     '.home .home-global-filter:focus{border-color:var(--fg3);box-shadow:0 0 0 2px var(--accentdim)}',
     '.home .home-filter-badge{font-size:12px;padding:3px 8px;border-radius:var(--r-pill);background:var(--accentdim);color:var(--accent);font-weight:500;white-space:nowrap}',
-    '.home .home-clear-btn{border:none;background:transparent;color:var(--fg3);font-size:13px;cursor:pointer;padding:2px 6px;line-height:1;border-radius:4px}',
+    '.home .home-clear-btn{border:none;background:transparent;color:var(--fg3);cursor:pointer;padding:2px 4px;border-radius:4px;display:inline-flex;align-items:center;justify-content:center}',
+    '.home .home-clear-btn .ui-icon{width:13px;height:13px}',
     '.home .home-clear-btn:hover{color:var(--fg);background:var(--hover)}',
     '.home .home-toolbar-actions{display:flex;align-items:center;gap:8px;flex-shrink:0}',
     '.home .home-tool-btn{white-space:nowrap}',
@@ -451,11 +452,14 @@
   }
 
   function expandAllNodes() {
+    (S.agents || []).forEach(function (ag) {
+      S.open['a:' + ag.id] = true;
+      for (var i = 0; i < GROUPS.length; i++) {
+        S.open['g:' + ag.id + '/' + GROUPS[i].id] = true;
+      }
+    });
     var aId = getActiveAgentId();
     if (aId) S.open['a:' + aId] = true;
-    for (var i = 0; i < GROUPS.length; i++) {
-      S.open['g:' + aId + '/' + GROUPS[i].id] = true;
-    }
     var provs = providerRows();
     for (var j = 0; j < provs.length; j++) {
       S.open['s:' + provs[j].id] = true;
@@ -522,7 +526,14 @@
         totalMatches += pMatches;
         matchedProvs++;
         S.open['s:' + p.id] = true;
-        if (aId) S.open['g:' + aId + '/' + p.group] = true;
+        (S.agents || []).forEach(function (ag) {
+          S.open['a:' + ag.id] = true;
+          S.open['g:' + ag.id + '/' + p.group] = true;
+        });
+        if (aId) {
+          S.open['a:' + aId] = true;
+          S.open['g:' + aId + '/' + p.group] = true;
+        }
       }
     }
 
@@ -538,18 +549,20 @@
     $globalFilterInp = h('input', {
       type: 'text',
       class: 'home-global-filter',
-      placeholder: '全局搜索模型名称或ID（如 gpt-4o、claude-3-5）...'
+      placeholder: '搜索模型名称或 ID...'
     });
     if (S.globalFilter) $globalFilterInp.value = S.globalFilter;
 
+    var closeIconNode = (window.PrismUI && typeof window.PrismUI.icon === 'function')
+      ? window.PrismUI.icon('close')
+      : null;
     $filterBadge = h('span', { class: 'home-filter-badge', style: { display: 'none' } });
     $clearFilterBtn = h('button', {
       type: 'button',
       class: 'home-clear-btn',
       style: { display: 'none' },
-      title: '清空搜索',
-      text: '✕'
-    });
+      title: '清空搜索'
+    }, [closeIconNode]);
 
     var debounceTimer = null;
     $globalFilterInp.addEventListener('input', function () {
@@ -583,7 +596,7 @@
     var expandAllBtn = h('button', {
       class: 'btn sm home-tool-btn',
       type: 'button',
-      title: '一键全部展开所有分组与来源模型列表',
+      title: '全部展开',
       onclick: function (e) {
         e.preventDefault();
         expandAllNodes();
@@ -593,7 +606,7 @@
     var collapseAllBtn = h('button', {
       class: 'btn sm home-tool-btn',
       type: 'button',
-      title: '一键全部折叠所有分组与来源卡片',
+      title: '全部折叠',
       onclick: function (e) {
         e.preventDefault();
         collapseAllNodes();
@@ -678,12 +691,12 @@
     clear($tree);
     if (!S.state) {
       $tree.appendChild(h('div', { class: 'empty' },
-        S.loadErr ? '配置还没读进来。点下面的「刷新」重试；先确认本地网关 8317 在跑。'
-                  : '正在读取 /api/state …'));
+        S.loadErr ? '配置加载失败，请检查网关状态并刷新。'
+                  : '正在加载状态…'));
       return;
     }
     if (!S.agents) {
-      $tree.appendChild(h('div', { class: 'empty' }, '正在读取 /api/agents …'));
+      $tree.appendChild(h('div', { class: 'empty' }, '正在加载 Agent 列表…'));
       return;
     }
     // L1：agent 做成手风琴——展开一个就收起别的。五个 agent 共享同一套网关路由，
@@ -705,10 +718,6 @@
     for (i = 0; i < S.agents.length; i++) {
       $tree.appendChild(agentNode(S.agents[i], S.agents[i].id === openAgent));
     }
-    $tree.appendChild(h('div', { class: 'note' },
-      '点一行展开下一层；模型层默认收起。「渠道头」是给同一个分组下多家来源做区分用的'
-      + '——它拼在客户端看到的模型 ID 前面（例如 srapi/gpt-5.6-sol）；无头的那家保留'
-      + '干净 ID，是该分组的主来源。'));
   }
 
   // 树 + 提示行一起刷。提示行依赖 S.state / S.open / 勾选草稿，三者都在这条路径上变。
@@ -738,7 +747,7 @@
       h('span', { class: 'gmeta', text: a.config_display || '' }),
       h('span', { class: 'gacts' }, [
         h('button', {
-          class: 'gbtn', type: 'button', title: '看接入会改哪几行（不写盘）',
+          class: 'gbtn', type: 'button', title: '预览接入配置变更',
           disabled: !a.implemented || !!S.agentBusy,
           onclick: function (e) { e.stopPropagation(); previewAgent(a.id); }
         }, S.agentBusy === a.id ? '…' : '接入预览')
@@ -808,7 +817,7 @@
       ];
       var kids = provs.map(function (p) { return sourceNode(a, g, p); });
       if (!kids.length) {
-        kids = [h('div', { class: 'gnote', text: '该分组暂无来源。用下面的「＋ 添加来源」加一个。' })];
+        kids = [h('div', { class: 'gnote', text: '该分组暂无来源' })];
       } else if (on > 1) {
         var heads = provs.filter(function (p) { return isOn(p.id) && !(p.head || '').trim(); });
         if (heads.length > 1) {
@@ -856,8 +865,8 @@
       // 无头 = 该分组的主来源，它保留干净的模型 ID。给它明确的「无头·主」标记
       class: 'ghead' + (head ? '' : ' none main'),
       title: head
-        ? ('渠道头「' + head + '」；点一下改它。客户端会看到 ' + head + '/' + (usable[0] || '模型'))
-        : ('没有渠道头 = 这个分组的主来源，模型保留干净的 ID。点一下设一个。'),
+        ? ('渠道头: ' + head + '（客户端 ID: ' + head + '/' + (usable[0] || '模型') + '）')
+        : '主来源（保留原始模型 ID）',
       text: head || '无头·主'
     });
     headEl.addEventListener('click', function (e) { e.stopPropagation(); editHead(a, p); });
@@ -866,7 +875,7 @@
     if (p.blocked) note = h('div', { class: 'gnote bad', text: '该来源已被标记阻断：' + p.blocked });
     else if (p.fetch_error) {
       note = h('div', { class: 'gnote warn' },
-        '上游模型列表这次没拉到（' + p.fetch_error + '）。已保存的勾选照旧显示、照旧保留。');
+        '上游模型拉取失败: ' + p.fetch_error);
     } else if (p.warning) {
       note = h('div', { class: 'gnote' }, '备注：' + String(p.warning).slice(0, 140));
     }
@@ -875,18 +884,17 @@
     var kids = [];
     var summaryNote = null;
     if (!usable.length) {
-      kids.push(h('div', { class: 'gnote' },
-        '上游没返回可勾选的模型（点「测试」看具体原因）。'));
+      kids.push(h('div', { class: 'gnote', text: '暂无可勾选模型' }));
     } else {
       summaryNote = h('div', { class: 'gnote' },
-        '已勾选 ' + exposed.length + ' / ' + usable.length + ' 个模型' +
-        (head ? '；客户端看到的 ID 前面都带「' + head + '/」' : '；这批模型用干净的 ID'));
+        '已选 ' + exposed.length + ' / ' + usable.length + ' 个模型' +
+        (head ? '（渠道头: ' + head + '）' : ''));
       kids.push(summaryNote);
 
       var filterInp = h('input', {
         class: 'model-search-inp',
         type: 'text',
-        placeholder: '过滤模型 (' + usable.length + ')，如 gpt-4o...'
+        placeholder: '过滤模型 (' + usable.length + ')...'
       });
       var filterBar = h('div', { class: 'model-filter-bar' }, filterInp);
       kids.push(filterBar);
@@ -901,8 +909,8 @@
           exposedTag.textContent = curExp.length + ' 暴露';
           exposedTag.style.display = curExp.length ? '' : 'none';
           if (summaryNote) {
-            summaryNote.textContent = '已勾选 ' + curExp.length + ' / ' + usable.length + ' 个模型' +
-              (head ? '；客户端看到的 ID 前面都带「' + head + '/」' : '；这批模型用干净的 ID');
+            summaryNote.textContent = '已选 ' + curExp.length + ' / ' + usable.length + ' 个模型' +
+              (head ? '（渠道头: ' + head + '）' : '');
           }
           updateTreeHint();
           renderActions();
@@ -971,12 +979,12 @@
     }, S.testing[p.id] ? '…' : '测试')];
     if (isCustom(p)) {
       out.push(h('button', {
-        class: 'gbtn', type: 'button', title: '编辑该自定义来源',
+        class: 'gbtn', type: 'button', title: '编辑来源',
         onclick: function (e) { e.stopPropagation(); openForm('edit', p.id); }
       }, '编辑'));
       if (S.confirmDel === p.id) {
         out.push(h('button', {
-          class: 'gbtn danger', type: 'button', title: '确认删除（先停用→删 plan→删 config）',
+          class: 'gbtn danger', type: 'button', title: '确认删除此来源',
           onclick: function (e) { e.stopPropagation(); removeSource(p.id); }
         }, '确认删除'));
         out.push(h('button', {
@@ -986,12 +994,12 @@
       } else {
         out.push(h('button', {
           class: 'gbtn danger', type: 'button',
-          title: isOn(p.id) ? '该来源当前已启用。删除会先停用再删' : '删除该自定义来源',
+          title: '删除来源',
           onclick: function (e) { e.stopPropagation(); S.confirmDel = p.id; renderTree(); }
         }, '删除'));
       }
     } else {
-      out.push(h('span', { class: 'gmeta', title: '内置来源由 routing-plan.json / 原管理页维护，这里只能测试和改渠道头', text: '内置' }));
+      out.push(h('span', { class: 'gmeta', title: '内置来源，支持连通性测试与配置渠道头', text: '内置' }));
     }
     return out;
   }
@@ -1003,7 +1011,7 @@
     var usable = codexUsable(alias);
     var lv = levelsOf(p, alias);
     var cb = h('input', { type: 'checkbox', class: 'gchk', checked: on, disabled: !usable,
-      title: usable ? '暴露给客户端' : '生图 / 已过期别名，保存时后端会跳过' });
+      title: usable ? '暴露给客户端' : '已停用别名' });
     cb.addEventListener('change', function () {
       var arr = (S.draft[p.id] || []).slice(), at = arr.indexOf(alias);
       if (cb.checked && at < 0) arr.push(alias);
@@ -1016,9 +1024,9 @@
       cb,
       highlightLabel(head, alias, S.globalFilter),
       head && !isLegacy ? h('span', { class: 'ghead', text: head, title: '流量走 ' + p.id }) : null,
-      isLegacy ? h('span', { class: 'gtag', text: '老任务别名', title: '老会话钉死的 ID，不加渠道头，且在客户端列表里隐藏' }) : null,
+      isLegacy ? h('span', { class: 'gtag', text: '老任务别名', title: '兼容历史会话别名，已在客户端隐藏' }) : null,
       !usable ? h('span', { class: 'gtag', text: '跳过',
-        title: '生图 / 已过期别名，保存时后端会跳过' }) : null,
+        title: '已停用别名' }) : null,
       lv && lv.levels.length ? h('span', { class: 'glv',
         title: '推理等级：' + lv.levels.join(' / ') + (lv.dflt ? '，默认 ' + lv.dflt : ''),
         text: lv.levels.length + ' LV' }) : null,
@@ -1137,8 +1145,8 @@
       var body = h('div', null);
       if (pv.blocked) {
         body.appendChild(h('div', { class: 'msg bad' }, h('span', { class: 'txt', text: pv.blocked })));
-        body.appendChild(h('div', { class: 'note', text: '没有可写的东西，这里只是把原因说清楚。' }));
-        return S.ctx.dialog({ title: '接入 ' + pv.label + ' ：被拒绝', body: body, okText: '知道了', cancelText: '关闭' });
+        
+        return S.ctx.dialog({ title: '接入 ' + pv.label, body: body, okText: '知道了', cancelText: '关闭' });
       }
       body.appendChild(h('div', { class: 'note', style: 'padding:0 0 10px' },
         '网关地址 ' + pv.gateway_base + ' · 会写进客户端配置的模型 ' + pv.models_count + ' 个'));
@@ -1158,9 +1166,9 @@
       });
       body.appendChild(pvBox);
       body.appendChild(h('div', { class: 'note' },
-        '写入前会先把它备份到 backups\\agent-connect-*\\；改完要完全退出并重开客户端才生效。'));
+        '原配置将自动备份，修改后需重启客户端生效。'));
       return S.ctx.dialog({
-        title: '接入 ' + pv.label + ' ：会改这几行',
+        title: '配置变更预览 · ' + pv.label,
         body: body, okText: '确认接入', cancelText: '取消'
       }).then(function (yes) {
         if (!yes) return null;
@@ -1168,8 +1176,7 @@
         return api('/api/connect', { method: 'POST', body: { agent: aid, confirm: true } })
           .then(function (r) {
             S.agentBusy = null;
-            flash('ok', (r.label || aid) + ' 已接入。备份在 ' + r.backup_dir +
-              '；' + (r.restart || '改完要重开客户端才生效。'));
+            flash('ok', (r.label || aid) + ' 已接入，需重启客户端生效。');
             return reload();
           });
       });
@@ -1186,18 +1193,16 @@
     var inp = h('input', { value: cur, placeholder: '例如 srapi（留空 = 无头主来源）' });
     var body = h('div', null,
       h('div', { class: 'note', style: 'padding:0 0 10px' },
-        '客户端看到的模型 ID 会变成：' + (cur || '（无头）') + '/' +
-        (modelList(p)[0] || '模型') + '。'),
+        '客户端模型 ID: ' + (cur ? cur + '/' : '') + (modelList(p)[0] || '模型')),
       h('div', { class: 'f' }, h('label', null, '渠道头'), inp),
       h('div', { class: 'note' },
-        '同一分组最多一个来源无渠道头（它保留干净的模型 ID）。' +
-        '改完在下一次「保存路由」时生效。'));
+        '同一分组仅允许一个无头主来源。保存路由后生效。'));
     setTimeout(function () { try { inp.focus(); inp.select(); } catch (e) {} }, 0);
     S.ctx.dialog({ title: '渠道头 · ' + (p.label || p.id), body: body, okText: '保存' })
       .then(function (yes) {
         if (!yes) return null;
         var want = String(inp.value || '').trim();
-        if (want === cur) { flash('info', '渠道头没变，什么都没做。'); return null; }
+        if (want === cur) { flash('info', '渠道头未修改'); return null; }
         if (want && !HEAD_RE.test(want)) {
           flash('bad', '渠道头「' + want + '」不合法：只能用 24 个字符以内的小写字母、数字、'
             + '点、下划线、连字符，不能含斜杠或空格。');
@@ -1207,8 +1212,7 @@
         return api('/api/sources/' + enc(p.id) + '/head', { method: 'PUT', body: { head: want } })
           .then(function (r) {
             S.busy = false;
-            flash('ok', (r.changed ? '渠道头已改为「' + (r.head || '（无头）') + '」' :
-              '渠道头没变') + '。要让它生效，点「保存路由」。');
+            flash('ok', (r.changed ? '渠道头已更新为「' + (r.head || '无头') + '」' : '渠道头未修改') + '，保存路由后生效。');
             return reload();
           }).catch(function (e) {
             S.busy = false;
@@ -1266,14 +1270,13 @@
         S.busy = false;
         var n = 0;
         for (i = 0; i < GROUPS.length; i++) n += (selected[GROUPS[i].id] || []).length;
-        S.msg = { kind: 'ok', text: '路由已保存：' + n + ' 个来源启用，本次提交了 ' +
-          Object.keys(picks).length + ' 个来源的模型勾选。新模型要重启客户端才在列表里可见。' };
+        S.msg = { kind: 'ok', text: '路由已保存（' + n + ' 个来源启用）' };
         return api('/api/sources').catch(function () { return null; });
       })
       .then(function (s) { if (Array.isArray(s)) S.sources = s; renderAll(); })
       .catch(function (e) {
         S.busy = false;
-        S.msg = { kind: 'bad', text: '保存失败：' + errText(e) + '。配置没有改动，可直接重试，或先点「刷新」再试。' };
+        S.msg = { kind: 'bad', text: '保存失败：' + errText(e) };
         renderActions();
       });
   }
@@ -1320,7 +1323,7 @@
       if (!S.wrap) return;                       // 已 unmount：别碰 DOM（同上）
       S.busy = false;
       S.loadErr = errText(e);
-      S.msg = { kind: 'bad', text: '读取配置失败：' + errText(e) + '。确认本地网关 8317 在跑，然后点「刷新」。' };
+      S.msg = { kind: 'bad', text: '读取配置失败：' + errText(e) };
       renderAll();
     });
   }
@@ -1342,7 +1345,7 @@
     var list = (S.state && Array.isArray(S.state.unreadable)) ? S.state.unreadable : [];
     if (!list.length) return;
     $unreadableBox.appendChild(h('div', { class: 'notice warn' },
-      h('span', { class: 'k', text: '有 ' + list.length + ' 个来源读不出状态' }),
+      h('span', { class: 'k', text: list.length + ' 个来源状态异常' }),
       h('span', { class: 'nlist' }, list.map(function (u) {
         return h('span', {
           class: 'pth',
@@ -1351,7 +1354,7 @@
       }))));
   }
 
-  // ── 底部：添加供应商（保留。原来那张「所有来源」9 列表已去掉，
+  // ── 底部：添加来源（保留。原来那张「所有来源」9 列表已去掉，
   //     来源的排序/统计在监控页）─────────────────────────────────────────
   function blankModel() { return { name: '', alias: '', cw: '', levels: [], dflt: '' }; }
   function blankForm() {
@@ -1374,8 +1377,7 @@
       S.form = { mode: 'edit', id: id, label: p.label || '', group: p.group || 'gpt',
         head: p.head || '', base_url: p.base_url || '', api_key: '', dirText: '',
         models: models.length ? models : [blankModel()], pulled: null,
-        err: isCustom(p) ? null : '这是内置来源：改端点/密钥会动到你原来的配置，请走原管理页。'
-          + '只有「渠道头」是例外——它只写 routing-plan.json，点行上的渠道头徽章就能改。' };
+        err: isCustom(p) ? null : '内置来源的端点与密钥受保护；渠道头可在行上直接调整。' };
     }
     S.confirmDel = null;
     renderForm();
@@ -1391,7 +1393,7 @@
         h('div', { class: 'as-open' },
           h('button', { class: 'btn pri', type: 'button', onclick: function () { openForm('create'); } }, '＋ 添加来源'),
           h('span', { class: 'as-line' }),
-          h('span', { class: 'hint', text: '新增来源默认是停用的，保存并启用后才参与路由' }))));
+          null)));
       return;
     }
     var isCreate = f.mode === 'create';
@@ -1428,7 +1430,7 @@
       h('div', { class: 'f' }, h('label', null, '分组'), groupSel),
       h('div', { class: 'f' }, h('label', null, '显示名称'), labelIn),
       h('div', { class: 'f' }, h('label', null, '渠道头'),
-        headIn, h('span', { class: 'sub', text: '区分同分组的多家来源' })),
+        headIn),
       h('div', { class: 'f span2' }, h('label', null, '端点'), urlIn),
       h('div', { class: 'f' }, h('label', null, 'API 密钥'), keyIn),
       h('div', { class: 'f span3' }, h('label', null, '模型目录'), dirIn,
@@ -1452,10 +1454,10 @@
 
   function pullHint() {
     var f = S.form;
-    if (!f.pulled) return '向上游发一次 /models（不发推理）';
+    if (!f.pulled) return '从上游拉取可用模型';
     if (!f.pulled.ok) return '拉取失败：' + f.pulled.text;
-    return '拉取到 ' + f.pulled.total + ' 个可用模型 · 已选 ' +
-      f.models.filter(function (m) { return m.alias; }).length + ' 个 · 生图模型自动排除';
+    return '已拉取 ' + f.pulled.total + ' 个可用模型 · 已选 ' +
+      f.models.filter(function (m) { return m.alias; }).length + ' 个';
   }
 
   function modelRow(m, i) {
@@ -1511,11 +1513,11 @@
   function pullModels() {
     var f = S.form;
     if (!f || S.busy) return;
-    if (!f.base_url) { f.err = '先填端点再拉取。'; renderForm(); return; }
+    if (!f.base_url) { f.err = '请先填写端点地址。'; renderForm(); return; }
     f.err = null; f.pulled = null; S.busy = true; renderForm();
     if (!f.api_key && f.mode === 'edit' && f.id) {
       S.busy = false;
-      useSnapshot('没重填密钥，用的是该来源上次快照的模型列表');
+      useSnapshot('使用上次快照的模型列表');
       return;
     }
     api('/api/sources/preview', { method: 'POST', body: { base_url: f.base_url, api_key: f.api_key || undefined } })
@@ -1531,7 +1533,7 @@
       })
       .catch(function (e) {
         if (e && (e.status === 404 || e.status === 405)) {
-          S.busy = false; useSnapshot('后端没有 /api/sources/preview，用的是该来源上次快照的模型列表'); return;
+          S.busy = false; useSnapshot('使用上次快照的模型列表'); return;
         }
         S.busy = false; f.pulled = { ok: false, text: errText(e) }; f.err = '拉取失败：' + errText(e); renderForm();
       });
@@ -1539,7 +1541,7 @@
   function useSnapshot(note) {
     var f = S.form;
     if (f.mode !== 'edit' || !f.id) {
-      f.pulled = { ok: false, text: '拿不到上游模型列表，新建来源请按行手填模型 ID，或先创建再回来编辑。' };
+      f.pulled = { ok: false, text: '获取模型列表失败，请手动填写模型 ID' };
       renderForm(); return Promise.resolve();
     }
     return api('/api/state', { timeout: 30000 }).then(function (st) {
@@ -1591,7 +1593,7 @@
     var f = S.form;
     if (!f) return;
     var lines = String(f.dirText || '').split(/[\r\n]+/).map(function (s) { return s.trim(); }).filter(Boolean);
-    if (!lines.length) { f.err = '模型目录是空的：先粘几行模型 ID，或点「拉取」。'; renderForm(); return; }
+    if (!lines.length) { f.err = '模型目录为空，请粘贴模型 ID 或点「拉取」。'; renderForm(); return; }
     var have = {};
     f.models.forEach(function (m) { if (m.alias) have[m.alias] = 1; });
     var added = 0;
@@ -1603,7 +1605,7 @@
     f.models = f.models.filter(function (m) { return !!m.alias; });
     if (!f.models.length) f.models.push(blankModel());
     tidyModels();
-    f.err = added ? (added + ' 个模型已加入下面的行，记得为需要的模型勾推理等级。') : '这些模型 ID 都已在下面的行里了。';
+    f.err = added ? (added + ' 个模型已添加') : '模型已存在';
     f.dirText = '';
     renderForm();
   }
@@ -1661,15 +1663,12 @@
       S.busy = false; S.form = null;
       S.msg = { kind: built.warn ? 'warn' : 'ok',
         text: (isCreate ? '来源已创建：' : '来源已更新：') + id +
-          '（config.yaml + routing-plan.json 两处已写入）。' +
-          (built.warn ? ' ' + built.warn : '') +
-          '新来源默认停用，在树里勾上它再点「保存路由」。' };
+          (built.warn ? '（' + built.warn + '）' : '') };
       return reload();
     }).catch(function (e) {
       S.busy = false;
       if (S.form) S.form.err = (isCreate ? '创建失败：' : '保存失败：') + errText(e);
-      S.msg = { kind: 'bad', text: (isCreate ? '创建失败：' : '保存失败：') + errText(e) +
-        '。后端会回滚已写的那一步；若提示回滚失败，请暂停网关后从 backups 目录恢复。' };
+      S.msg = { kind: 'bad', text: (isCreate ? '创建失败：' : '保存失败：') + errText(e) };
       renderAll();
     });
   }
@@ -1679,12 +1678,11 @@
     renderTree(); renderActions();
     api('/api/sources/' + enc(id), { method: 'DELETE' }).then(function () {
       S.busy = false;
-      S.msg = { kind: 'ok', text: '已删除来源 ' + id +
-        (wasOn ? '（它原来已启用；后端按「先停用→删 plan→删 config」三步处理）' : '') };
+      S.msg = { kind: 'ok', text: '已删除来源 ' + id };
       return reload();
     }).catch(function (e) {
       S.busy = false;
-      S.msg = { kind: 'bad', text: '删除失败：' + errText(e) + '。若该来源仍启用，请先在树里取消勾选再删。' };
+      S.msg = { kind: 'bad', text: '删除失败：' + errText(e) };
       renderAll();
     });
   }
@@ -1744,7 +1742,7 @@
 
     $treeHint = h('span', { class: 'hint', text: '读取中…' });
     $tree = h('div', { class: 'graph' });
-    $tree.appendChild(h('div', { class: 'empty', text: '正在读取 /api/state …' }));
+    $tree.appendChild(h('div', { class: 'empty', text: '正在加载路由状态…' }));
     $globalToolbar = renderGlobalToolbar();
     wrap.appendChild($unreadableBox = h('div'));
     wrap.appendChild(h('div', { class: 'sec' },
@@ -1757,8 +1755,8 @@
     wrap.appendChild(h('div', { class: 'sec' },
       h('div', { class: 'sechead' },
         h('span', { class: 'cmt', text: '//' }), h('span', { class: 'stitle', text: '添加来源' }),
-        h('span', { class: 'hr' }),
-        ),
+        h('span', { class: 'hr' })
+      ),
       ($form = h('div'))));
 
     wrap.appendChild($acts = h('div'));

@@ -79,6 +79,7 @@
   }
 
   function append(el, kids) {
+    if (!el) return el;
     for (var i = 0; i < kids.length; i++) {
       var k = kids[i];
       if (k === null || k === undefined || k === false || k === '') continue;
@@ -89,7 +90,11 @@
     return el;
   }
 
-  function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); return el; }
+  function clear(el) {
+    if (!el) return el;
+    while (el.firstChild) el.removeChild(el.firstChild);
+    return el;
+  }
 
   function text(v, dash) {
     if (v === null || v === undefined || v === '') return dash === undefined ? '—' : dash;
@@ -398,6 +403,7 @@
     'caret-down': '<path d="M4 5.5l4 5 4-5z" fill="currentColor"/>',
     spinner: '<circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.6" fill="none" stroke-dasharray="28" stroke-dashoffset="10" stroke-linecap="round"/>',
     loading: '<circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.6" fill="none" stroke-dasharray="28" stroke-dashoffset="10" stroke-linecap="round"/>',
+    close: '<line x1="3.5" y1="3.5" x2="12.5" y2="12.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><line x1="12.5" y1="3.5" x2="3.5" y2="12.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>',
     search: '<circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" stroke-width="1.3" fill="none"/><line x1="10" y1="10" x2="14" y2="14" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>'
   };
 
@@ -462,9 +468,9 @@
     var msg = api.isApi(err) ? err.message : ('界面出错：' + api.shortErr(err));
     var hint = extraHint;
     if (!hint) {
-      if (api.isApi(err) && err.status === 0) hint = '检查后台服务是否在跑；页面若是 file:// 打开的，改用 Prism 窗口。';
-      else if (api.isApi(err) && err.status === 404) hint = '后台接口缺失，多半是版本不匹配或静态服务顶替了控制台服务。';
-      else hint = '可以直接重试；反复失败就把下面这行连同日志页的内容一起报出来。';
+      if (api.isApi(err) && err.status === 0) hint = '无法连接后台服务，请检查服务状态。';
+      else if (api.isApi(err) && err.status === 404) hint = '请求的后台接口不存在。';
+      else hint = '请尝试重试或查看日志排查。';
     }
     var box = h('div', { class: 'statebox' }, [
       h('span', { class: 'ic' }, [ui.icon('bad')]),
@@ -662,6 +668,7 @@
      新问题取代旧问题。 */
   function dialog(opts) {
     opts = opts || {};
+    var isDanger = !!(opts.danger || opts.destructive);
     if (dlgOpen) {
       var previous = dlgOpen;
       dlgOpen = null;          // 先清，免得 close() 里再触发一次
@@ -672,7 +679,7 @@
       var bd = h('div', { class: 'bd', id: 'modal' });
       var body = opts.body;
       if (typeof body === 'string') body = h('div', { text: body });
-      var ok = ui.button(opts.okText || '确定', function () { close(true); }, opts.danger ? 'danger' : 'pri');
+      var ok = ui.button(opts.okText || '确定', function () { close(true); }, isDanger ? 'danger' : 'pri');
       var cancel = ui.button(opts.cancelText || '取消', function () { close(false); });
       var dlg = h('div', {
         class: 'dlg',
@@ -691,7 +698,14 @@
         var selector = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
         var list = Array.prototype.slice.call(dlg.querySelectorAll(selector));
         return list.filter(function (el) {
-          return el.offsetParent !== null || el.offsetWidth > 0 || el.offsetHeight > 0;
+          if (el.disabled || el.getAttribute('aria-hidden') === 'true') return false;
+          if (typeof window.getComputedStyle === 'function') {
+            try {
+              var cs = window.getComputedStyle(el);
+              if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+            } catch (e) {}
+          }
+          return el.offsetParent !== null || el.offsetWidth > 0 || el.offsetHeight > 0 || el === ok || el === cancel;
         });
       }
 
@@ -725,8 +739,10 @@
         }
         if (e.key === 'Enter') {
           if (e.target && e.target.tagName === 'TEXTAREA') return;
+          // 若焦点在弹窗内的自定义非确认/取消按钮上，回车应触发该按钮自身激活，不直接关闭弹窗
+          if (e.target && e.target.tagName === 'BUTTON' && e.target !== ok && e.target !== cancel) return;
           e.preventDefault();
-          if (opts.danger) {
+          if (isDanger) {
             if (document.activeElement === cancel) {
               close(false);
             } else if (document.activeElement === ok) {
@@ -757,10 +773,16 @@
       document.addEventListener('keydown', onKey, true);
       document.body.appendChild(bd);
       setTimeout(function () {
-        if (opts.danger) {
+        if (isDanger) {
           cancel.focus();
         } else {
-          ok.focus();
+          // 若弹窗内部自带 input/textarea，优先聚焦输入框；否则聚焦确定按钮
+          var firstInp = dlg.querySelector('input:not([disabled]), textarea:not([disabled])');
+          if (firstInp && (!document.activeElement || !dlg.contains(document.activeElement) || document.activeElement === ok)) {
+            firstInp.focus();
+          } else {
+            ok.focus();
+          }
         }
       }, 0);
     });
@@ -973,15 +995,15 @@
 
   var PAGES = [
     { name: 'home', label: '首页', hash: '#/home', file: 'pages/home.js',
-      desc: '节点树：客户端 → 分组 → 来源 → 模型' },
+      desc: '来源与模型拓扑配置' },
     { name: 'usage', label: '用量', hash: '#/usage', file: 'pages/usage.js',
-      desc: '配额窗口、请求计数、长期历史' },
+      desc: '配额窗口与用量历史' },
     { name: 'monitor', label: '监控', hash: '#/monitor', file: 'pages/monitor.js',
-      desc: '网关状态、当前路由、来源健康' },
+      desc: '网关健康与路由状态' },
     { name: 'logs', label: '日志', hash: '#/logs', file: 'pages/logs.js',
-      desc: '增量轮询、搜索、清空' },
+      desc: '网关实时运行日志' },
     { name: 'settings', label: '设置', hash: '#/settings', file: 'pages/settings.js',
-      desc: '网关四项、应用四项' }
+      desc: '网关与应用参数设置' }
   ];
 
   /* 旧地址映射。首页原来是 #/config（那时它叫"配置"），改名的同时留一条别名：
@@ -1081,9 +1103,9 @@
     isConfirmingNav = true;
     dialog({
       title: '未保存的修改',
-      body: '当前页面有未保存的修改，切换页面将丢失这些改动。确定要放弃修改并离开吗？',
-      okText: '放弃修改并离开',
-      cancelText: '留在此页',
+      body: '当前修改尚未保存，离开将丢失改动。',
+      okText: '放弃修改',
+      cancelText: '取消',
       danger: true
     }).then(function (ok) {
       isConfirmingNav = false;
@@ -1172,10 +1194,9 @@
 
   function missingPanel(info, err) {
     var box = ui.empty(
-      '「' + info.label + '」页的模块还没就位',
-      '壳在等 <b>' + info.file + '</b>。<br>' +
-      '该文件要调用 <b>Prism.registerPage(\'' + info.name + '\', { mount(root, ctx) {...} })</b> 注册自己。<br>' +
-      '报错原文：' + api.shortErr(err),
+      '页面加载失败',
+      '未能加载 <b>' + info.file + '</b> 模块。<br>' +
+      '错误信息：' + api.shortErr(err),
       [ui.button('重试', function () { route(true); }, 'pri')]
     );
     return box;
@@ -1209,7 +1230,11 @@
     });
     document.title = 'Prism · ' + info.label;
 
-    var view = document.getElementById('view');
+    var view = document.getElementById('view') || document.querySelector('main.view') || document.querySelector('main');
+    if (!view) {
+      if (window.console && console.error) console.error('[route] #view 容器未就绪，路由暂缓执行');
+      return;
+    }
     runCleanup();
     clear(view).appendChild(ui.loading('正在加载「' + info.label + '」…'));
     state.page = name;
@@ -1240,15 +1265,15 @@
         if (token !== mountToken) return;
         // mount 是异步的，期间可能什么都没画。给个兜底，绝不白屏
         if (!host.firstChild) {
-          host.appendChild(ui.empty('这一页没有渲染出内容',
-            '「' + info.label + '」的 mount 执行完了，但容器还是空的。<br>这是页面模块的问题，不是数据问题。',
+          host.appendChild(ui.empty('页面未生成内容',
+            '「' + info.label + '」页未返回有效渲染内容。',
             [ui.button('重试', function () { route(true); }, 'pri')]));
         }
       }, function (e) {
         if (token !== mountToken) return;
         if (window.console && console.error) console.error('[' + name + '] mount 失败', e);
         clear(view).appendChild(ui.error(e, function () { route(true); },
-          '这是「' + info.label + '」页渲染时抛的错，通常是数据形状和预期不一致。'));
+          '「' + info.label + '」页渲染出错。'));
       });
     }).catch(function (e) {
       if (token !== mountToken) return;
@@ -1339,7 +1364,7 @@
     } else if (ident === 'ok') {
       gwLabel = '在线'; gwLight = 'ok'; gwClass = 'ok';
     } else if (ident === 'foreign') {
-      gwLabel = '在线，但不是本目录的配置'; gwLight = 'warn'; gwClass = 'warn';
+      gwLabel = '在线（配置不匹配）'; gwLight = 'warn'; gwClass = 'warn';
     } else {
       // unknown，以及"端口通、identity 却是 down"这种自相矛盾——都只敢说"未核实"
       gwLabel = '身份未核实'; gwLight = 'warn'; gwClass = 'warn';
@@ -1371,7 +1396,7 @@
     setText(routeEl, h('span', { text: groups + ' 组 · ' + srcs + ' 来源' }));
 
     var em = r.exposed_models || [];
-    setText(modelEl, h('span', { title: em.join('\n') }, em.length ? (em.length + ' 模型 · ' + em[0]) : '无已暴露模型'));
+    setText(modelEl, h('span', { title: em.join('\n') }, em.length ? (em.length + ' 模型 · ' + em[0]) : '暂无模型'));
 
     setText(timeEl, h('span', { text: '刷新 ' + clock(Date.now()) }));
   }
@@ -1474,10 +1499,19 @@
     syncMax();
     window.addEventListener('resize', syncMax);
 
-    /* 双击顶栏空白 = 最大化/还原。原生标题栏没了，这个系统行为要自己补。
-       点在导航/按钮/端口灯上时不算（否则双击 tab 也会把窗口顶成最大化）。 */
+    /* 按住顶栏空白 = 鼠标拖拽窗口（通过 Win32 WM_NCLBUTTONDOWN 系统级原生接管）。
+       排除 a, button, input, .wctl, .tabs a, #kbdHint 等交互元素。 */
     var top = document.querySelector('.top');
     if (top) {
+      top.addEventListener('mousedown', function (e) {
+        if (e.button !== 0) return;
+        var t = e.target;
+        if (t && t.closest && t.closest('a,button,input,.wctl,.tabs a,#kbdHint')) return;
+        if (api && typeof api.drag === 'function') {
+          try { api.drag(); } catch (err) {}
+        }
+      });
+
       top.addEventListener('dblclick', function (e) {
         var t = e.target;
         if (t && t.closest && t.closest('a,button,input,.tabs,.navr,.wctl')) return;
@@ -1530,7 +1564,7 @@
         var flushOwner = (inst && typeof inst.flushSave === 'function') ? inst
                        : (def && typeof def.flushSave === 'function') ? def : null;
         if (!flushOwner) {
-          toast('有未保存的改动，先保存或撤销再刷新', 'warn');
+          toast('当前有未保存的改动，请先保存', 'warn');
           return;
         }
         Promise.resolve(flushOwner.flushSave()).then(function () {
@@ -1541,13 +1575,13 @@
           // 整页永久卡死（复查轮 4 的 #1，实测复现）。
           // 这里加收敛条件：还脏就停手并如实说明，绝不递归。
           if (isCurrentDirty()) {
-            toast('仍有改动没有保存完，先等它完成再刷新', 'warn');
+            toast('保存中，请稍后再试', 'warn');
             return;
           }
           toast('配置已自动保存', 'ok');
           triggerSilentRefresh();
         }).catch(function (err) {
-          toast('自动保存失败，未刷新：' + ((err && err.message) || err), 'bad');
+          toast('自动保存失败：' + ((err && err.message) || err), 'bad');
         });
         return;
       }
@@ -1679,15 +1713,31 @@
       }
     });
 
-    // 全局兜底：任何没人接的错都不该让界面停摆
+    // 全局兜底：任何没人接的错都不该让界面停摆；若当前视口为空则显示错误面板，杜绝白屏
     window.addEventListener('error', function (e) {
       if (window.console && console.error) console.error('[window.onerror]', e.message || e);
+      var v = document.getElementById('view');
+      if (v && (!v.firstChild || v.querySelector('#boot'))) {
+        clear(v).appendChild(ui.error(e.error || e.message || '界面加载异常', function () { location.reload(); }, '可点击重试重新加载控制台'));
+      }
     });
     window.addEventListener('unhandledrejection', function (e) {
       if (window.console && console.error) console.error('[unhandledrejection]', e.reason);
+      var v = document.getElementById('view');
+      if (v && (!v.firstChild || v.querySelector('#boot'))) {
+        clear(v).appendChild(ui.error(e.reason || '后台任务异常', function () { location.reload(); }, '可点击重试重新加载控制台'));
+      }
     });
 
-    route();
+    try {
+      route();
+    } catch (routeErr) {
+      if (window.console && console.error) console.error('[route error]', routeErr);
+      var viewEl = document.getElementById('view');
+      if (viewEl) {
+        clear(viewEl).appendChild(ui.error(routeErr, function () { location.reload(); }, '路由初始化异常'));
+      }
+    }
     startPolling();
 
     // 调试入口：控制台里 Prism.api.get('api/state').then(console.log)

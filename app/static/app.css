@@ -85,8 +85,9 @@ html[data-theme="dark"]{
 }
 *{box-sizing:border-box}
 html,body{height:100%}
-/* html/body 透明：让 DWM 的 Mica 能透上来。见下面「无原生标题栏 + Mica」段。 */
-html,body{margin:0;background:transparent;color:var(--fg);font-family:var(--sans);
+html{margin:0;background:var(--bg);color:var(--fg);font-family:var(--sans);
+  font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased}
+body{margin:0;background:transparent;color:var(--fg);font-family:var(--sans);
   font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased}
 body{overflow:hidden;-webkit-user-select:none;user-select:none;
      /* 首帧淡入：Mica 背景不动，只有内容层进场（prefers-reduced-motion 下豁免，见文件尾） */
@@ -616,7 +617,7 @@ noscript .statebox{margin:40px auto;max-width:640px}
   font-variant-numeric:tabular-nums}
 .graph .gnode .gspacer{flex:1;min-width:8px}
 
-/* 渠道头：需求 5 的"供应商头"。做成可点的浅色药丸，点一下改它 */
+/* 渠道头：需求 5 的"来源头"。做成可点的浅色药丸，点一下改它 */
 .graph .ghead{flex:0 0 auto;font-family:var(--mono);font-size:11px;line-height:1;
   padding:4px 8px;border-radius:var(--r-pill);border:1px solid var(--line2);
   background:var(--panel3);color:var(--fg2);cursor:pointer;
@@ -676,7 +677,7 @@ noscript .statebox{margin:40px auto;max-width:640px}
 .graph .gnote.ok{color:var(--ok)}
 .graph .gnote .pth{font-family:var(--mono)}
 
-/* 首页底部：添加供应商（保留）+ 动作条 */
+/* 首页底部：添加来源（保留）+ 动作条 */
 .addsrc{margin-top:6px}
 .addsrc .as-open{display:flex;align-items:center;gap:10px;padding:2px 0}
 .addsrc .as-line{flex:1;height:1px;background:var(--line)}

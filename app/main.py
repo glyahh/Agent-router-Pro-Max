@@ -90,6 +90,13 @@ def _own_hwnd(retries: int = 20):
     窗口是异步创建的，start() 的回调里未必已经存在，所以重试。
     """
     user32 = ctypes.windll.user32
+    user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+    user32.FindWindowW.restype = wintypes.HWND
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    user32.IsWindowVisible.restype = wintypes.BOOL
+
     pid = os.getpid()
     WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
@@ -112,38 +119,71 @@ def _own_hwnd(retries: int = 20):
             found = []
         if found:
             return found[0]
-        time.sleep(0.15)
+        time.sleep(0.1)
     return None
 
 
-def hide_native_titlebar() -> None:
-    """摘掉 WS_CAPTION。由 webview.start(func) 在 GUI 起来后调用一次。"""
+def hide_native_titlebar(window=None) -> None:
+    """frameless 窗口上恢复系统边缘缩放与 DWM 圆角。
+
+    create_window 已传 frameless=True（FormBorderStyle=None），配合 winforms.py
+    的 WndProc 拦截 WM_NCCALCSIZE，客户区覆盖整个窗口——系统深色模式下 DWM
+    渲染残留非客户区为深色的"黑条"因此不再出现。
+
+    这里加回 WS_THICKFRAME 等让边缘缩放、Snap 贴边、系统菜单恢复。
+    WM_NCCALCSIZE 被拦截后 WS_THICKFRAME 只提供边缘热区，不分配非客户区空间。
+    """
+    if window is not None and hasattr(window, 'events') and hasattr(window.events, 'shown'):
+        try:
+            window.events.shown.wait(timeout=2.0)
+        except Exception:
+            pass
     hwnd = _own_hwnd()
     if not hwnd:
-        log('摘标题栏：没找到窗口句柄，跳过（会保持原生标题栏）')
+        log('恢复边缘缩放：没找到窗口句柄，跳过')
         return
     try:
         user32 = ctypes.windll.user32
+        user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+        user32.GetWindowLongW.restype = wintypes.LONG
+        user32.SetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int, wintypes.LONG]
+        user32.SetWindowLongW.restype = wintypes.LONG
+        user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint]
+        user32.SetWindowPos.restype = wintypes.BOOL
+
+        # 加回系统级窗口功能（frameless=True 时 WinForms 全部清掉了）
+        WS_THICKFRAME  = 0x00040000
+        WS_SYSMENU     = 0x00080000
+        WS_MINIMIZEBOX = 0x00020000
+        WS_MAXIMIZEBOX = 0x00010000
         style = user32.GetWindowLongW(wintypes.HWND(hwnd), GWL_STYLE)
-        before = style
-        style &= ~WS_CAPTION
+        style |= WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX
         user32.SetWindowLongW(wintypes.HWND(hwnd), GWL_STYLE, style)
-        # SWP_FRAMECHANGED 是必须的：不调它，改 style 不会立刻重算非客户区，
-        # 窗口会保持旧外观直到下次尺寸变化。
+
+        # SWP_FRAMECHANGED 让系统重算（WM_NCCALCSIZE 被 WndProc 拦截，不会分配非客户区）
         user32.SetWindowPos(wintypes.HWND(hwnd), None, 0, 0, 0, 0,
                             SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER)
-        # 圆角：摘掉框架后系统不管了，得自己开。失败不算致命（最多是直角窗口），
-        # 所以单独 try —— 老系统上 DwmSetWindowAttribute 不认 33 号属性。
+
+        # DWM 圆角
         try:
             ctypes.windll.dwmapi.DwmSetWindowAttribute(
                 wintypes.HWND(hwnd), ctypes.c_uint(DWMWA_WINDOW_CORNER_PREFERENCE),
                 ctypes.byref(ctypes.c_int(DWMWCP_ROUND)), ctypes.c_uint(4))
         except Exception:
             log('设圆角失败（不致命）：\n' + traceback.format_exc())
-        log('摘标题栏：WS_STYLE 0x%08X -> 0x%08X（保留 THICKFRAME/SYSMENU/MIN/MAXBOX）'
-            % (before & 0xFFFFFFFF, style & 0xFFFFFFFF))
+
+        # DWM 主题跟 APP 有效主题走（而非系统主题），避免深色阴影与浅色内容不搭
+        try:
+            is_dark = (server.effective_theme() == 'dark')
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                wintypes.HWND(hwnd), ctypes.c_uint(DWMWA_USE_IMMERSIVE_DARK_MODE),
+                ctypes.byref(ctypes.c_int(1 if is_dark else 0)), ctypes.c_uint(4))
+        except Exception:
+            pass
+
+        log('frameless 窗口已恢复 WS_THICKFRAME（边缘缩放/Snap）与 DWM 圆角')
     except Exception:
-        log('摘标题栏失败：\n' + traceback.format_exc())
+        log('恢复边缘缩放失败：\n' + traceback.format_exc())
 
 
 def make_window_api(shell):
@@ -192,6 +232,21 @@ def make_window_api(shell):
                     shell.window.maximize()
             except Exception:
                 log('最大化/还原失败：\n' + traceback.format_exc())
+
+        def drag(self) -> None:
+            """自绘标题栏原生系统拖动。
+
+            通过 Win32 WM_NCLBUTTONDOWN + HTCAPTION 将鼠标拖拽直接交由系统内核处理，
+            实现零延迟、支持 Snap 贴边半屏与最大化手势的绝对原生拖拽手感。
+            """
+            hwnd = _own_hwnd(retries=1)
+            if hwnd:
+                try:
+                    user32 = ctypes.windll.user32
+                    user32.ReleaseCapture()
+                    user32.SendMessageW(wintypes.HWND(hwnd), 0x00A1, 2, 0)
+                except Exception:
+                    pass
 
         def close(self) -> None:
             """走和点原生 X 完全同一条路径（close_to_tray 时收到托盘）。"""
@@ -1000,14 +1055,17 @@ def run(console_port: int = DEFAULT_CONSOLE_PORT, open_window: bool = True) -> i
 
     # 令牌拼在窗口 URL 上（?t=）：app.js 首次读到就存 sessionStorage，请求全程带头。
     # 回环口上的 URL 不出本机；令牌只走这一条路，不打日志、不进环境变量。
+    bg_color = '#1B1B1B' if server.effective_theme() == 'dark' else '#FFFFFF'
     window = webview.create_window(TITLE, shell.url + '?t=' + console_token,
                                    width=1180, height=800,
                                    min_size=(900, 620), text_select=True,
-                                   js_api=make_window_api(shell))
+                                   background_color=bg_color,
+                                   js_api=make_window_api(shell),
+                                   frameless=True)
     shell.set_window(window)
     try:
         # func 在 GUI 循环起来之后调用，那时窗口才真的存在
-        webview.start(hide_native_titlebar)
+        webview.start(hide_native_titlebar, (window,))
     finally:
         icon = shell.icon
         if icon is not None:

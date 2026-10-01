@@ -351,18 +351,18 @@
   // 提示区单独成块，搜索时能就地替换而不动工具条（否则输入框会失焦）
   function notes() {
     var box = h('div', { id: 'pm-notes' });
-    if (S.queryBad) box.appendChild(notice('bad', '正则写法有误，已按普通文本搜索：', S.query + '（' + S.queryBad + '）'));
-    if (S.err) box.appendChild(notice('bad', '日志拉取失败 · ' + S.err, '每 ' + (POLL_MS / 1000) + 's 自动重试。'));
+    if (S.queryBad) box.appendChild(notice('bad', '正则语法错误：', S.query + '（' + S.queryBad + '）'));
+    if (S.err) box.appendChild(notice('bad', '日志拉取失败 · ' + S.err, '自动重试中'));
     // 服务端在读主日志时撞到字节上限才置这个标志：这时候给回的行数比要的少，
     // 界面必须说出来，不然用户会把"只有这几行"当成"日志就这么多"。
     if (S.logTruncated) {
-      box.appendChild(notice('warn', '仅显示前 ' + size(TAIL_LIMIT),
-        '服务端从 main.log 尾部只回溯到这里（X-Prism-Truncated: 1），比请求的 ' + TAIL + ' 行少，不是完整一段。看全文请开网关的 logs\\main.log。'));
+      box.appendChild(notice('warn', '日志已截断',
+        '单次读取达上限（' + size(TAIL_LIMIT) + '），完整内容请查看 logs/main.log。'));
     }
-    if (S.gap) box.appendChild(notice('warn', '本轮与上轮尾部不重叠，可能有遗漏行。', '清空本页缓冲可重新同步。'));
+    if (S.gap) box.appendChild(notice('warn', '日志可能存在间断', '清空缓冲可重新同步。'));
     if (S.truncated.length) {
-      box.appendChild(notice('warn', '仅显示前 ' + size(TRUNC_LIMIT),
-        '错误日志 ' + S.truncated.join('、') + ' 超过单文件上限（X-Prism-Truncated: 1），只是前一段。'));
+      box.appendChild(notice('warn', '错误日志已截断',
+        '文件 ' + S.truncated.join('、') + ' 超过上限（' + size(TRUNC_LIMIT) + '），仅显示前部分。'));
     }
     return box;
   }
@@ -396,12 +396,12 @@
 
   function logView() {
     if (!S.raw.length) {
-      return statebox('empty', S.err ? '还没读到日志行' : '日志为空',
-        S.err ? '下面每 3 秒会自动重试。' : '网关可能刚启动，或者日志刚被清空过。');
+      return statebox('empty', S.err ? '未获取到日志' : '暂无日志',
+        S.err ? '正在尝试重新连接…' : '网关尚无新的日志输出。');
     }
     if (!S.filtered.length) {
-      return statebox('empty', '没有匹配的行',
-        '缓冲 ' + S.raw.length + ' 行' + (S.hiddenCount ? '，其中 ' + S.hiddenCount + ' 行是管理流量被隐藏' : '') + '。换个搜索词，或关掉「隐藏管理流量」。');
+      return statebox('empty', '无匹配日志',
+        '当前筛选无结果（已缓冲 ' + S.raw.length + ' 行' + (S.hiddenCount ? '，隐藏管理流量 ' + S.hiddenCount + ' 行' : '') + '）。');
     }
 
     currentMatches = [];
@@ -494,8 +494,8 @@
     // 错误行用红色芯片，别指望在文本上加颜色——.hint 没有红色变体（与 CSP 无关：
     // style-src 有 unsafe-inline，内联样式是允许的，但设计系统不给 .hint 红色变体）
     if (S.errCount) kids.push(chip('错误/失败行 ' + S.errCount, 'bad'));
-    kids.push(h('span', { class: 'hint', text: '尾部 ' + TAIL + ' 行 · 每 ' + (POLL_MS / 1000) + 's 轮询' }));
-    kids.push(h('span', { class: 'hint', text: S.lastAt ? '最后 ' + clock(S.lastAt) : '尚未刷新' }));
+    kids.push(h('span', { class: 'hint', text: '尾部 ' + TAIL + ' 行 · 3s 轮询' }));
+    kids.push(h('span', { class: 'hint', text: S.lastAt ? '更新于 ' + clock(S.lastAt) : '尚未刷新' }));
     return h('div', { class: 'toolbar', id: 'pm-foot' }, kids);
   }
 
@@ -562,7 +562,7 @@
 
   function errorSection() {
     var extra = button('刷新列表', function () { loadErrorFiles(); }, 'sm');
-    var sec = section('错误日志', '网关记录的失败请求原文', errorBody(), extra);
+    var sec = section('错误日志', '失败请求转储', errorBody(), extra);
     return sec;
   }
 
@@ -580,7 +580,7 @@
       var link = h('a', { class: 'btn sm', href: href, download: name, target: '_blank', rel: 'noopener' }, '下载');
       return [
         { text: name, cls: 'n' },
-        { node: big ? chip('大文件', 'warn', '服务端可能截断超大文件') : chip('正常') },
+        { node: big ? chip('大文件', 'warn', '文件较大，可能已截断') : chip('正常') },
         { text: size(f.size), cls: 'r' },
         { text: mtime(f.modified) },
         { node: link, cls: 'act' }
@@ -633,7 +633,7 @@
       // 页面就是从控制台服务那儿加载的，location.host 就是该找的端口。以前这里写死
       // 8318，改了 PRISM_CONSOLE_PORT 的机器上这句会把人指错地方。
       var where = location.host ? '（' + location.host + '）' : '';
-      throw new Error('连不上控制台服务' + where + '。确认 Prism 的控制台在运行。');
+      throw new Error('无法连接控制台服务' + where);
     });
   }
 

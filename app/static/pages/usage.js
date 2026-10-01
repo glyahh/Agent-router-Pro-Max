@@ -297,7 +297,7 @@
         try { json = JSON.parse(txt); } catch (e) { /* 下面统一报错 */ }
         if (!json || typeof json !== 'object') {
           throw new Error('后端返回了非 JSON 内容（HTTP ' + res.status + '）。'
-            + '若是 404，说明 8318 上跑的是 route_selector.py 而不是 Prism 的 server.py。');
+            );
         }
         if (json.ok === false) throw new Error(json.error || ('请求失败 HTTP ' + res.status));
         if (!res.ok) throw new Error(json.error || ('请求失败 HTTP ' + res.status));
@@ -352,8 +352,8 @@
     if (note) return emptySlotHTML('尚无配额观测', note);
     return emptySlotHTML('尚无配额观测',
       availableTrue
-        ? '账号已连上，但本次无窗口读数。配额信号随上游响应头返回，网关再过一次请求就有。'
-        : '网关刚启动，或该账号还没产生限流读数。仅官方 OAuth 账号有配额信号；API key 来源看下面的请求计数。');
+        ? '当前暂无窗口读数，产生请求后自动更新。'
+        : '当前无配额数据，仅官方账号支持配额监测。');
   }
 
   function renderQuota(data) {
@@ -509,18 +509,16 @@
 
     var head = '<div class="sechead"><span class="cmt">//</span>'
       + '<span class="stitle">请求计数 · 按来源</span><span class="hr"></span>'
-      + '<span class="hint">10 分钟一桶'
-      + (merged.length ? ' · 网关窗口 ' + hours.toFixed(1) + 'h' : '')
-      + ' · 计数' + esc(since) + '，网关重启清零'
-      + (days ? ' · 本地历史 ' + days + 'd' : '')
+      + '<span class="hint">10 分钟粒度'
+      + (merged.length ? ' · 窗口 ' + hours.toFixed(1) + 'h' : '')
+      + (days ? ' · 历史 ' + days + 'd' : '')
       + '</span></div>';
 
     var html = '<div class="sec">' + head;
 
     if (!merged.length) {
       html += emptySlotHTML('暂无请求计数',
-        since + '还没有经过任一来源的请求。计数不持久化，网关重启即归零；'
-        + '长期趋势看「长期历史」。') + '</div>';
+        '暂无经过网关的请求记录。') + '</div>';
       return html;
     }
 
@@ -573,8 +571,7 @@
       + '<span><i class="sw idle"></i>空闲桶 <b>' + idle + '</b></span>'
       + '<span class="u-right">窗口内合计 · ' + merged.length + ' 桶 · 全来源</span>'
       + '</div>'
-      + (flat ? '<div class="u-note">网关这个窗口内一次都没被调用过，所以每根柱子都是空的。'
-        + '柱高＝桶内请求数；上游来一次就填上。</div>' : '')
+      + (flat ? '<div class="u-note">当前时间窗口内暂无请求数据。</div>' : '')
       + '<div class="chart-wrap">'
       + yAxisHtml
       + gridHtml
@@ -594,8 +591,8 @@
 
     var html = '<div class="sec">' + head;
     if (!counts.length) {
-      html += emptySlotHTML('没有可列出的来源',
-        'api-key-usage 为空：上游未被调用过，或网关刚重启过。') + '</div>';
+      html += emptySlotHTML('暂无来源数据',
+        '暂无各来源调用统计。') + '</div>';
       return html;
     }
 
@@ -631,11 +628,8 @@
 
     html += '<div class="chart tight"><table class="t" data-role="srctable">'
       + '<tr><th>来源</th><th>服务商</th><th>状态</th><th class="r">成功</th><th class="r">失败</th>'
-      + '<th class="r">最近桶</th></tr>'
-      + body + '</table>'
-      + '<div class="u-note">「最近桶」= 该来源最近一个 10 分钟桶里的请求数（成功+失败）。'
-      + '状态按成功/失败比例推出；有错误码时用后端给的状态。</div>'
-      + '</div></div>';
+      + '<th class="r">最近 10 分钟</th></tr>'
+      + body + '</table></div></div>';
     return html;
   }
 
@@ -667,12 +661,12 @@
     var head = '<div class="sechead"><span class="cmt">//</span>'
       + '<span class="stitle">长期历史</span><span class="hr"></span>'
       + seg + rangeSeg
-      + '<span class="hint">每 10 分钟采样一次</span></div>';
+      + '</div>';
 
     var html = '<div class="sec">' + head;
     if (!rows.length) {
-      html += emptySlotHTML('暂无历史样本',
-        '历史每 10 分钟落库一次。刚装好或不足一个采样周期时为空，等一轮再看。') + '</div>';
+      html += emptySlotHTML('暂无历史记录',
+        '尚未采集到历史采样数据。') + '</div>';
       return html;
     }
 
@@ -729,10 +723,7 @@
     html += '<div class="chart tight"><div class="u-scroll"><table class="t" data-role="histtable">'
       + '<tr><th>' + (byWeek ? '周（周一起）' : '日期') + '</th><th>来源</th>'
       + '<th class="r">成功</th><th class="r">失败</th><th class="r">失败率</th><th>相对量</th></tr>'
-      + body + '</table></div>'
-      + '<div class="u-note">采样口径是「每 10 分钟一次瞬时计数」，所以这里是趋势不是精确账。'
-      + '网关重启处会有断档，不代表没流量。</div>'
-      + '</div></div>';
+      + body + '</table></div></div></div>';
     return html;
   }
 
@@ -773,24 +764,21 @@
   }
 
   function loadingHTML() {
-    return '<div class="sec"><div class="u-empty"><div class="t">正在读取 /api/usage…</div>'
-      + '<div class="d">本机接口，通常几十毫秒。</div></div></div>';
+    return '<div class="sec"><div class="u-empty"><div class="t">正在加载用量数据…</div></div></div>';
   }
 
   function errorHTML(msg) {
     return '<div class="sec"><div class="u-error">'
-      + '<div class="t">⚠ 用量数据读取失败</div>'
+      + '<div class="t">用量数据读取失败</div>'
       + '<div class="d">' + esc(msg) + '</div>'
       + '<span class="btn pri" data-role="retry">重试</span>'
-      + '<div class="u-note">若一直失败：确认 8318 上跑的是 Prism 的 server.py（而不是老的 route_selector.py），'
-      + '并确认 8317 网关在跑。Prism 只读。</div>'
       + '</div></div>';
   }
 
   function bannerHTML(msg) {
     // 有旧数据时不清屏，但必须把「这次没读到」说出来，否则用户会把旧数字当成实时值
     return '<div class="sec u-lead"><div class="u-error slim">'
-      + '<div class="t">⚠ 本次刷新失败，下面是上一次读到的数据</div>'
+      + '<div class="t">刷新失败，显示缓存数据</div>'
       + '<div class="d">' + esc(msg) + '</div>'
       + '<span class="btn" data-role="retry">重试</span>'
       + '</div></div>';

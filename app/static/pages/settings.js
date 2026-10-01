@@ -31,33 +31,33 @@
     {
       id: 'g-debug', scope: 'gateway', key: 'debug', kind: 'bool',
       label: 'Debug 模式',
-      hint: '网关自身调试日志。'
+      hint: '记录网关内部调试日志'
     },
     {
       id: 'g-proxy', scope: 'gateway', key: 'proxy_url', kind: 'text', mono: true,
       placeholder: 'http://127.0.0.1:7897',
       label: '上游代理',
-      hint: '留空 = 直连。改错会让所有来源一起失联。'
+      hint: '留空表示直连'
     },
     {
       id: 'g-retry', scope: 'gateway', key: 'request_retry', kind: 'int', min: 0, max: 99, unit: '次',
       label: '请求重试次数',
-      hint: '0 = 不重试。'
+      hint: '0 表示不重试'
     },
     {
       id: 'g-reqlog', scope: 'gateway', key: 'request_log', kind: 'bool',
       label: '请求日志',
-      hint: '把每次请求落盘，长期开着很吃盘。'
+      hint: '落盘记录每笔请求内容'
     },
     {
       id: 'a-auto', scope: 'app', key: 'autostart', kind: 'bool',
       label: '开机自启',
-      hint: '登录后自动启动 Prism。'
+      hint: '系统登录后自动启动'
     },
     {
       id: 'a-close', scope: 'app', key: 'close_to_tray', kind: 'seg',
       label: '关闭窗口时',
-      hint: '点 × 只收起窗口，网关继续跑。',
+      hint: '窗口关闭后保持后台运行',
       options: [{ v: true, t: '到托盘' }, { v: false, t: '直接退出' }]
     },
     {
@@ -73,12 +73,12 @@
     {
       id: 'a-interval', scope: 'app', key: 'sample_interval_sec', kind: 'int', min: 10, max: 86400, unit: '秒',
       label: '用量采样间隔',
-      hint: '默认 600（10 分钟）。'
+      hint: '默认 600 秒'
     },
     {
       id: 'a-retention', scope: 'app', key: 'retention_days', kind: 'int', min: 1, max: 3650, unit: '天',
       label: '历史保留上限',
-      hint: '超过这个天数的本地采样记录会被清理。'
+      hint: '超期采样记录自动清理'
     }
   ];
 
@@ -711,7 +711,7 @@
           h('div', { class: 'ps-lbl', text: '高级设置' }),
           h('div', {
             class: 'ps-hint',
-            text: '认证文件、OAuth 登录、原始 YAML 编辑在 CLIProxyAPI 官方面板。'
+            text: '网关底层管理面板'
           })
         ]),
         h('div', { class: 'ps-ctl' }, [
@@ -730,7 +730,7 @@
         h('span', { class: 'cmt', text: '//' }),
         h('span', { class: 'stitle', text: '高级配置' }),
         h('span', { class: 'hr' }),
-        h('span', { class: 'hint', text: '跳转' })
+        null
       ]),
       h('div', { class: 'ps-list' }, [advancedRow()])
     ]);
@@ -753,7 +753,7 @@
           loaded = false;
           loadEmpty = true;
           setStatusAll('idle', '');
-          showBanner('设置项为空', '后端返回了空的设置结构，可能是 app\\settings.json 与网关都还没读通。', [
+          showBanner('设置项为空', '未读取到有效设置数据。', [
             h('button', { class: 'btn', type: 'button', text: '重新读取', onclick: load })
           ]);
           refreshSummary();
@@ -782,7 +782,7 @@
         var msg = (err && err.message) || String(err);
         loaded = false;
         loadFailed = true;
-        showBanner('读不到设置', msg + '　—　先确认 8317 网关和 8318 控制台都在跑，再点重新读取。', [
+        showBanner('读不到设置', msg, [
           h('button', { class: 'btn', type: 'button', text: '重新读取', onclick: load }),
           h('a', { class: 'btn ps-btn', href: ADVANCED_URL, target: '_blank', rel: 'noopener noreferrer', text: '打开官方面板' })
         ]);
@@ -869,6 +869,7 @@
       id: PAGE_ID,
       root: root,
       reload: load,
+      refresh: load,
       isDirty: isDirty,
       flushSave: flushSave,
       resetDirty: resetDirty,
@@ -889,6 +890,12 @@
     order: 5,
     mount: mount,
     render: function (ctx) { return mount(ctx); },
+    refresh: function () {
+      return page._instance && typeof page._instance.reload === 'function' ? page._instance.reload() : Promise.resolve();
+    },
+    reload: function () {
+      return page._instance && typeof page._instance.reload === 'function' ? page._instance.reload() : Promise.resolve();
+    },
     isDirty: function () {
       return page._instance && typeof page._instance.isDirty === 'function' ? page._instance.isDirty() : false;
     },

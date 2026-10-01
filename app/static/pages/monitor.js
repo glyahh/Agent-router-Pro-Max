@@ -241,15 +241,15 @@
     r.appendChild(toolbar());
 
     if (S.err && !S.data) {
-      r.appendChild(statebox('bad', '读取监控数据失败', S.err + (S.paused ? '　（已停自动刷新；恢复后点重试）' : ''),
+      r.appendChild(statebox('bad', '读取监控数据失败', S.err + (S.paused ? '（已暂停自动刷新）' : ''),
         [button('重试', function () { S.paused = false; load(true); }, 'pri')]));
       return;
     }
-    if (!S.data) { r.appendChild(statebox('spinner', '正在读取网关状态…', '首次轮询尚未返回。')); return; }
+    if (!S.data) { r.appendChild(statebox('spinner', '正在读取网关状态…', '')); return; }
 
     if (S.err) {
       r.appendChild(notice('bad', '刷新失败：' + S.err,
-        S.paused ? '已停自动刷新，避免加重封禁；恢复后点「刷新」。下表是上一次成功读取的数据。' : '下表是上一次成功读取的数据。'));
+        S.paused ? '已暂停自动刷新，当前显示缓存数据。' : '当前显示缓存数据。'));
     }
 
     r.appendChild(gatewaySection(S.data.gateway || {}));
@@ -262,9 +262,9 @@
   function toolbar() {
     var hint;
     if (S.err) hint = '读取失败';
-    else if (S.lastAt) hint = '最后刷新 ' + clock(S.lastAt);
+    else if (S.lastAt) hint = '更新于 ' + clock(S.lastAt);
     else hint = '等待首次数据';
-    hint += S.followed ? ' · 壳每 5s 轮询' : ' · 每 ' + Math.round(nextDelay() / 1000) + 's 自动刷新';
+    hint += S.followed ? ' · 5s 轮询' : ' · ' + Math.round(nextDelay() / 1000) + 's 刷新';
 
     var kids = [
       h('span', { class: 'cmt', text: '//' }),
@@ -336,42 +336,42 @@
     var runCell, runHint;
     if (!running) {
       runCell = [h('span', { class: 'dot off' }), h('span', { class: 'v', text: '离线' })];
-      runHint = '没在监听，检查 cli-proxy-api.exe';
+      runHint = '未监听，检查 cli-proxy-api 进程';
     } else if (ident === 'ok') {
       runCell = [h('span', { class: 'dot' }), h('span', { class: 'v', text: '在线' })];
-      runHint = port + ' 端口可达，且读的是本目录的 config.yaml';
+      runHint = port + ' 端口可达，配置匹配';
     } else if (ident === 'foreign') {
       runCell = [h('span', { class: 'dot warn' }),
-        h('span', { class: 'v', text: '在线（但不是本目录的配置）' })];
-      runHint = '端口上有网关，但读的不是本目录配置';
+        h('span', { class: 'v', text: '在线（配置不匹配）' })];
+      runHint = '端口已连接，但配置来源不一致';
     } else {
       // unknown，以及"端口通、identity 却是 down"这种自相矛盾的情况，都落这里。
       // 矛盾时宁可说"没核实"，也不能挑好听的那半句说。
       runCell = [h('span', { class: 'dot warn' }),
         h('span', { class: 'v', text: '在线（身份未核实）' })];
-      runHint = '端口有监听，但核不出读的是哪份配置';
+      runHint = '端口已连接，无法核实配置路径';
     }
 
     // 身份那一格的值：芯片 + 那个网关实际读的配置路径（它自己命令行里的 -config）。
     var identCell, identHint;
     if (ident === 'ok') {
       identCell = h('span', { class: 'v' }, [
-        chip('本目录', 'ok', '它读的就是本目录的 config.yaml'),
+        chip('本目录', 'ok', '读取当前目录 config.yaml'),
         h('span', { text: ' ' }), h('span', { text: conf || '—' })]);
-      identHint = '命令行 -config 指向本目录';
+      identHint = '指向当前目录';
     } else if (ident === 'foreign') {
       identCell = h('span', { class: 'v' }, [
-        chip('非本目录', 'warn', '端口上跑的是另一个部署的网关'),
-        h('span', { text: ' ' }), h('span', { text: conf || '配置路径读不到' })]);
-      identHint = '命令行 -config 不指向本目录';
+        chip('非本目录', 'warn', '指向其他目录配置'),
+        h('span', { text: ' ' }), h('span', { text: conf || '配置路径不可读' })]);
+      identHint = '未指向当前目录';
     } else if (ident === 'down') {
-      identCell = h('span', { class: 'v' }, chip('未运行', 'sm', '端口上没人听，没有身份可核'));
-      identHint = '端口上没人听';
+      identCell = h('span', { class: 'v' }, chip('未运行', 'sm', '端口未监听'));
+      identHint = '端口未监听';
     } else {
       identCell = h('span', { class: 'v' }, [
-        chip('未核实', 'warn', '进程信息读不出来（提权、受保护或位数不同）'),
+        chip('未核实', 'warn', '无法获取进程配置信息'),
         h('span', { text: ' ' }), h('span', { text: conf || '—' })]);
-      identHint = '核不出读的是哪份配置，不当成本目录的';
+      identHint = '配置路径无法确认';
     }
 
     var cfgOk = g.config_ok;
@@ -380,8 +380,8 @@
     var body = kv([
       ['运行状态', runCell, h('span', { class: 'hint', text: runHint })],
       ['网关身份', identCell, h('span', { class: 'hint', text: identHint })],
-      ['端口', String(port), h('span', { class: 'hint', text: '本地管理 API' })],
-      ['网关版本', verCell, h('span', { class: 'hint', text: '取自网关启动日志' })],
+      ['端口', String(port), null],
+      ['网关版本', verCell, null],
       // 三态：true=一致 / false=读不通或不一致 / null=还读不到，无从判断。
       // 前两个走绿红，"未知"单独给黄色——它会显示成"异常"的话，
       // 用户会去改 config.yaml，而实际该做的是先把网关连上。
@@ -390,30 +390,18 @@
           cfgOk === true ? 'config.yaml 与 routing-plan.json 一致'
             : cfgOk === false ? 'config.yaml 读不通，或与路由计划不一致'
               : '还读不到 config.yaml，一致性无从判断')]),
-        h('span', { class: 'hint', text: 'config.yaml 与路由计划一致性' })]
+        null]
     ]);
 
     var sec = section('网关', '127.0.0.1:' + port, h('div', { class: 'card' }, h('div', { class: 'cardb' }, body)));
     if (!running) {
-      // "下面多半是空表"是句假话：来源行来自 routing-plan.json，网关挂了也照样列得出来，
-      // 只是计数、冷却、启用状态全取不到。说清楚是"这些字段读不到"，别让用户以为没来源。
-      sec.insertBefore(notice('bad', '网关未运行：', '计数、冷却、启用状态读不到（下表显示 —）；来源清单来自本机 routing-plan.json。启动网关后点「刷新」。'), sec.lastChild);
+      sec.insertBefore(notice('bad', '网关未运行', '状态与计数不可用，来源列表来自本地路由计划。'), sec.lastChild);
     } else if (ident === 'foreign') {
-      // 这一条是整页最要紧的话：下面所有数字都不是本目录的。别只说"身份异常"，
-      // 要说清楚"你现在看的这一页是谁的"——否则用户会拿别人的数据去改本目录的配置。
-      //
-      // 开头直接用后端的 note（它自己就是一句完整的话，已经把两个路径都写进去了），
-      // 不另起标题——那会把同一句话在提示条里说两遍。
-      // 粗体的那一小段只当标题，后端的 note 整句原样接在后面——不另写一句同义的话，
-      // 也不把 note 拆开重拼（它已经把两个路径都写进去了）。
       sec.insertBefore(notice('warn', '网关身份不符',
-        note || ('端口上跑的不是本目录的配置：它读的是 ' + (conf || '另一份 config.yaml')),
-        ['本页数据全部来自那个网关，「清空日志」清的也是它的日志。',
-          '要换成本目录的网关，先停掉那个进程。']), sec.lastChild);
+        note || ('端口运行的网关读取了其他配置：' + (conf || '未知路径'))), sec.lastChild);
     } else if (ident === 'unknown') {
       sec.insertBefore(notice('warn', '网关身份未核实',
-        (note || '端口上有网关在听，但读不出它用的是哪份配置。') +
-        ' 下面这些数据可能来自另一个部署，核实清楚之前别当成是本目录这套。'), sec.lastChild);
+        (note || '端口运行的网关配置路径无法确认。')), sec.lastChild);
     } else if (g.version_stale && g.latest) {
       sec.insertBefore(notice('warn', '网关版本落后：', g.version + ' → ' + g.latest + '，重启网关即可更新。'), sec.lastChild);
     }
@@ -430,12 +418,12 @@
     var err = sp.last_error ? String(sp.last_error) : '';
     var every = dur(sp.interval_sec);
     var detail;
-    if (err) detail = '上次采样失败：' + err;
-    else if (!running) detail = '用量历史不会再更新：采样线程没在跑。';
-    else detail = (every ? '每 ' + every + ' 一次' : '间隔未知') +
-      (sp.last_at ? ' · 上次 ' + sp.last_at : ' · 还没成功采样过一次');
+    if (err) detail = '采样失败：' + err;
+    else if (!running) detail = '采样线程未运行。';
+    else detail = (every ? every + ' 一次' : '定期采样') +
+      (sp.last_at ? ' · 最近 ' + sp.last_at : '');
     return h('div', { class: 'toolbar' }, [
-      h('span', { class: 'hint', text: '采样器' }),
+      
       chip(err ? '上次失败' : running ? 'RUNNING' : 'STOPPED', err ? 'bad' : running ? 'ok' : 'warn'),
       h('span', { class: 'hint', text: detail })
     ]);
@@ -479,7 +467,7 @@
       // 读不到模型列表和"一个模型都没暴露"是两回事，别让盲区显示成空
       body.appendChild(blind
         ? statebox('bad', '无法判定已暴露模型', reason)
-        : statebox('empty', '当前没有已暴露的模型', '在配置页勾选模型并「保存路由」后可见。'));
+        : statebox('empty', '暂无已暴露模型', '请在首页保存路由。'));
     } else {
       var MAX = 80;
       // 用 .toolbar 当容器：它本身就是 flex+wrap+gap，不必再定义一套 chips 类
@@ -532,14 +520,13 @@
       ];
     });
 
-    var empty = statebox('empty', '没有可显示的上游来源',
-      '先在配置页加一个来源。');
+    var empty = statebox('empty', '暂无上游来源',
+      '请在首页添加来源。');
 
     var sec = section('来源', srcs.length + ' 来源',
       h('div', null, [
-        // 这条说明不能省：计数是进程内的，重启就归零。不写清楚会被读成"从没被用过"
-        notice('accent', '计数为「' + since + '」的进程内累计。',
-          '网关重启即归零；趋势见用量页。'),
+        notice('accent', '计数为「' + since + '」的进程内累计',
+          '网关重启归零；长期历史见用量页。'),
         table([
           { t: '来源' }, { t: 'ID' }, { t: '类型' }, { t: '启用' },
           { t: '成功', cls: 'r' }, { t: '失败', cls: 'r' },
