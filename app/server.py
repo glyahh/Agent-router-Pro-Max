@@ -154,7 +154,7 @@ STATIC_ALIAS = {'/': 'index.html'}
 # --------------------------------------------------------------------------- 异常
 
 class HttpError(Exception):
-    """带 HTTP 状态码的中文错误。状态码只取 400/404/405/409/413/500。"""
+    """带 HTTP 状态码的中文错误。状态码只取 400/401/404/405/409/413/500。"""
 
     def __init__(self, status: int, message: str):
         super().__init__(message)
@@ -208,8 +208,12 @@ class ExclusiveServer(ThreadingHTTPServer):
         log.exception('处理请求出错：%s', client_address)
 
 
-def create_server(port: int = DEFAULT_PORT) -> ExclusiveServer:
-    """建服务但不启动。端口被占用时抛 PortBusy（中文说明）。"""
+def create_server(port: int = DEFAULT_PORT, token: str | None = None) -> ExclusiveServer:
+    """建服务但不启动。端口被占用时抛 PortBusy（中文说明）。
+
+    token 非空时启用 /api/* 的 X-Prism-Token 令牌闸（桌面版用法）；None = 不启用
+    （python server.py 的独立调试形态，浏览器直接开就能用）。
+    """
     port = int(port)
     if not 1 <= port <= 65535:
         raise RouteError('端口 %s 不在 1~65535 范围内' % port)
@@ -218,6 +222,7 @@ def create_server(port: int = DEFAULT_PORT) -> ExclusiveServer:
     except OSError as exc:
         raise PortBusy(port, exc) from None
     httpd.console_port = port
+    httpd.console_token = token
     return httpd
 
 
@@ -245,11 +250,11 @@ def _prune_backups() -> None:
         log.info('清理旧备份 %d 个：%s', len(removed), '、'.join(removed))
 
 
-def start_background(port: int = DEFAULT_PORT) -> ExclusiveServer:
-    """后台线程里跑服务，立刻返回。main.py 用这个。"""
+def start_background(port: int = DEFAULT_PORT, token: str | None = None) -> ExclusiveServer:
+    """后台线程里跑服务，立刻返回。main.py 用这个（token=本次启动的控制台令牌）。"""
     _ensure_logging()
     _prune_backups()
-    httpd = create_server(port)
+    httpd = create_server(port, token)
     thread = threading.Thread(target=httpd.serve_forever, kwargs={'poll_interval': 0.3},
                               name='prism-console', daemon=True)
     thread.start()
@@ -847,6 +852,22 @@ class Handler(BaseHTTPRequestHandler):
         if origin and origin != 'http://127.0.0.1:%d' % port:
             raise HttpError(409, '拒绝跨站请求（Origin %r 与本机控制台不同源）' % origin[:80])
 
+    def _check_token(self, path: str) -> None:
+        """控制台令牌闸（ME-12）：只拦 /api/*，静态放行（页面要先加载才能拿到令牌）。
+
+        只在桌面版启用（main.py 每次 start_background 传入本次启动的随机令牌）；
+        独立调试形态（python server.py）不传 token，这里整条跳过——浏览器直接开
+        照样能用，探针与手工调试都不用操心令牌。多用户机器上，第二个本地账户即使
+        把请求伪造到回环口，没有这个只有本窗口拿得到的令牌也进不来。
+        """
+        token = getattr(self.server, 'console_token', None)
+        if not token or not path.startswith('/api/'):
+            return
+        got = (self.headers.get('X-Prism-Token') or '').strip()
+        if got != token:
+            raise HttpError(401, '控制台令牌校验未过。请从 Prism 窗口使用；'
+                                 '浏览器调试请改用独立模式（python server.py --port …）。')
+
     def _read_body(self, required: bool):
         raw_len = self.headers.get('Content-Length')
         if raw_len is None:
@@ -931,6 +952,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 self._read_body(False)      # 请求体先读干净，连接里别留残字节
                 self._check_client()
+                self._check_token(self.path)
                 self._json(405, {'ok': False, 'error': '不支持的方法：' + method}, body=not head)
             except HttpError as exc:
                 self._json(exc.status, {'ok': False, 'error': exc.message}, body=not head)
@@ -949,6 +971,7 @@ class Handler(BaseHTTPRequestHandler):
             # 超限时关连接的理由）。浏览器预检不带 body，但别的客户端会带。
             self._read_body(False)
             self._check_client()
+            self._check_token(self.path)
         except HttpError as exc:
             return self._fail(exc.status, exc.message)
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
@@ -969,6 +992,7 @@ class Handler(BaseHTTPRequestHandler):
             # 留下没读完的字节，HTTP/1.1 keep-alive 的下一个请求就被解析成垃圾。
             body = self._read_body(False)   # 有的 POST（/api/recheck）本来就不带 body
             self._check_client()
+            self._check_token(path)
             if not path.startswith('/api/'):
                 if method != 'GET':
                     raise HttpError(405, '静态文件只支持 GET')

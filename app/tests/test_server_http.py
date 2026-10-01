@@ -270,7 +270,50 @@ finally:
     server.stop_server(httpd)
 
 print()
-print('== 8. 生产数据污染闸门（E4）==')
+print('== 8. 控制台令牌闸（ME-12：桌面版启用，调试形态不启用）==')
+_real_snapshot = bridge.snapshot
+bridge.snapshot = lambda: {'ok-marker': True}
+_tport = None
+_probe2 = socket.socket()
+_probe2.bind(('127.0.0.1', 0))
+_tport = _probe2.getsockname()[1]
+_probe2.close()
+_tokened = server.create_server(_tport, token='tok-abc-123')
+_tthread = threading.Thread(target=_tokened.serve_forever, kwargs={'poll_interval': 0.05},
+                            daemon=True)
+_tthread.start()
+try:
+    base_t = 'http://127.0.0.1:%d' % _tokened.console_port
+    # 端到端：令牌闸只在桌面版启用
+    try:
+        urllib.request.urlopen(base_t + '/api/theme', timeout=5)
+        check('启用令牌：无头 /api/* 被 401 拒', False, '不应到达')
+    except urllib.error.HTTPError as exc:
+        check('启用令牌：无头 /api/* 被 401 拒', exc.code, 401)
+        check_true('401 是 JSON 的 ok:false', json.loads(exc.read())['ok'] is False)
+    req = urllib.request.Request(base_t + '/api/theme',
+                                 headers={'X-Prism-Token': 'wrong'})
+    try:
+        urllib.request.urlopen(req, timeout=5)
+        check('启用令牌：错头同样 401', False, '不应到达')
+    except urllib.error.HTTPError as exc:
+        check('启用令牌：错头同样 401', exc.code, 401)
+    req = urllib.request.Request(base_t + '/api/theme',
+                                 headers={'X-Prism-Token': 'tok-abc-123'})
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        check('启用令牌：对头放行', resp.status, 200)
+    with urllib.request.urlopen(base_t + '/', timeout=5) as resp:
+        check('启用令牌：静态资源不拦（页面要先加载）', resp.status, 200)
+finally:
+    server.stop_server(_tokened)
+
+# 纯分发：fake 实例的 server 没有 console_token 属性 → 不启用，行为与旧版完全一致
+st, _, _, _ = api('GET', '/api/theme')
+check('调试形态（无 token 属性）：/api/* 照常放行', st, 200)
+bridge.snapshot = _real_snapshot
+
+print()
+print('== 9. 生产数据污染闸门（E4）==')
 _db_after = (_DB_PATH.stat().st_mtime_ns, _DB_PATH.stat().st_size) if _DB_PATH.exists() else None
 check('usage-history.db 跑完前后零变化', _db_after, _DB_BEFORE)
 backups_dir = ROOT / 'backups'

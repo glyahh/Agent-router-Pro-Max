@@ -33,6 +33,7 @@ import html
 import logging
 import logging.handlers
 import os
+import secrets
 import socket
 import subprocess
 import sys
@@ -925,7 +926,11 @@ def run(console_port: int = DEFAULT_CONSOLE_PORT, open_window: bool = True) -> i
     server.settings_observer.add(sync_autostart)
 
     try:
-        httpd = server.start_background(console_port)
+        # 控制台令牌（ME-12）：每次启动随机生成，只经窗口 URL 一次性交给前端，
+        # 之后前端每个 /api/* 请求带头。多用户机器上第二个本地账户伪造到回环口的
+        # 请求没有这个令牌，改不了网关配置。独立调试形态（python server.py）不启用。
+        console_token = secrets.token_urlsafe(24)
+        httpd = server.start_background(console_port, token=console_token)
     except server.PortBusy as exc:
         log(str(exc))
         if not open_window:
@@ -982,7 +987,10 @@ def run(console_port: int = DEFAULT_CONSOLE_PORT, open_window: bool = True) -> i
     webview.settings['DRAG_REGION_SELECTOR'] = '.pywebview-drag-region'
     webview.settings['DRAG_REGION_DIRECT_TARGET_ONLY'] = True
 
-    window = webview.create_window(TITLE, shell.url, width=1180, height=800,
+    # 令牌拼在窗口 URL 上（?t=）：app.js 首次读到就存 sessionStorage，请求全程带头。
+    # 回环口上的 URL 不出本机；令牌只走这一条路，不打日志、不进环境变量。
+    window = webview.create_window(TITLE, shell.url + '?t=' + console_token,
+                                   width=1180, height=800,
                                    min_size=(900, 620), text_select=True,
                                    js_api=make_window_api(shell))
     shell.set_window(window)

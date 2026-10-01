@@ -41,6 +41,12 @@ DNS rebinding 和跨站表单都能把请求送到本机端口上。
 |---|---|---|
 | `Host` | 必须**精确等于** `127.0.0.1:<console_port>`。写 `localhost`、局域网 IP 一律拒绝 | `409` |
 | `Origin` | 有该头时必须等于 `http://127.0.0.1:<console_port>`；没有该头则放行（同源 GET 不带） | `409` |
+| `X-Prism-Token` | 仅桌面版启用（main.py 每次启动生成随机令牌）。`/api/*` 必须带头且等于本次启动的令牌；静态资源不拦（页面要先加载才能拿到令牌） | `401` |
+
+令牌的交付：Prism 用 `webview.create_window(url + "?t=<token>")` 把令牌拼在窗口 URL 上，
+app.js 首次读到后存进 sessionStorage（不进历史记录），之后每个请求都带头。**独立调试形态
+不启用**：`python app/server.py --port …` 起的服务 `console_token` 为空，Host/Origin 闸照旧，
+浏览器直接开就能用——探针与手工调试都不用操心令牌。
 
 用 `409` 而不是 `403`，是为了和既有选择页的行为一致——前端 `app.js` 对 `404/409/5xx` 各有一套
 中文文案，行为一致才不会让用户看错原因。

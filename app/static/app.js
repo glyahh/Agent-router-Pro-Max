@@ -165,6 +165,25 @@
     return location.port || String(DEFAULT_CONSOLE_PORT);
   }
 
+  /* 控制台令牌（ME-12）：桌面版每次启动随机生成，经窗口 URL 的 ?t= 一次性交来。
+     首次读到就转存 sessionStorage（不进历史记录、刷新不丢）；之后每个 /api/* 请求
+     带 X-Prism-Token 头。浏览器直接打开（调试形态）没有 t，读到空串也无妨——
+     那种服务端根本不启用令牌校验。见 INTERFACES.md 的安全模型一节。 */
+  var _consoleToken = null;
+  function consoleToken() {
+    if (_consoleToken === null) {
+      var m = location.search.match(/[?&]t=([^&]+)/);
+      if (m) {
+        try { _consoleToken = decodeURIComponent(m[1]); sessionStorage.setItem('prism-ct', _consoleToken); }
+        catch (e) { _consoleToken = ''; }
+      } else {
+        try { _consoleToken = sessionStorage.getItem('prism-ct') || ''; }
+        catch (e) { _consoleToken = ''; }
+      }
+    }
+    return _consoleToken;
+  }
+
   function buildUrl(path, params) {
     var p = String(path || '');
     if (p.charAt(0) === '/') p = p.slice(1);
@@ -201,7 +220,8 @@
 
     var ctl = (typeof AbortController === 'function') ? new AbortController() : null;
     var timer = null;
-    var init = { method: method, cache: 'no-store', headers: { 'Accept': 'application/json' } };
+    var init = { method: method, cache: 'no-store',
+                 headers: { 'Accept': 'application/json', 'X-Prism-Token': consoleToken() } };
     if (ctl) init.signal = ctl.signal;
     if (opts.body !== undefined && opts.body !== null) {
       init.headers['Content-Type'] = 'application/json';
