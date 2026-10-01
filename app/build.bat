@@ -8,7 +8,7 @@ if not exist ".venv\Scripts\pyinstaller.exe" (
   echo [错误] 找不到 .venv\Scripts\pyinstaller.exe
   echo        先重建虚拟环境：
   echo          python -m venv .venv
-  echo          .venv\Scripts\python.exe -m pip install pywebview==6.2.1 pystray==0.19.5 Pillow==12.3.0 pyinstaller==6.22.3
+  echo          .venv\Scripts\python.exe -m pip install -r ..\requirements.lock
   exit /b 1
 )
 

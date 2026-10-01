@@ -244,7 +244,51 @@ finally:
     shutil.rmtree(_vroot, ignore_errors=True)
 
 print()
-print('== 8. 生产数据污染闸门（E4）==')
+print('== 8. 首启引导（HI-03：bridge.ensure_first_run_files，全在临时目录）==')
+_froot = tempfile.mkdtemp(prefix='prism-first-run-')
+_orig_root2 = bridge.ROOT
+try:
+    bridge.ROOT = Path(_froot)
+    check('全新目录：生成两个文件', sorted(bridge.ensure_first_run_files()),
+          ['.local-secrets.json', 'config.yaml'])
+    saved = json.loads(Path(_froot, '.local-secrets.json').read_text(encoding='utf-8'))
+    cfg = Path(_froot, 'config.yaml').read_text(encoding='utf-8')
+    check_true('management_key 前缀 prism- 且两处一致',
+               saved['management_key'].startswith('prism-')
+               and ('secret-key: "%s"' % saved['management_key']) in cfg,
+               saved['management_key'][:12] + '…')
+    check_true('api_key 进了网关放行清单',
+               saved['api_key'].startswith('sk-prism-')
+               and ('"%s"' % saved['api_key']) in cfg, saved['api_key'][:12] + '…')
+    check_true('auth 目录已建（网关 auth-dir 指它）', Path(_froot, 'auth').is_dir())
+    check_true('上游来源段是空列表（不编造凭据）',
+               'codex-api-key: []' in cfg and 'openai-compatibility: []' in cfg)
+    check('再跑一次幂等（一个字节不动）', bridge.ensure_first_run_files(), [])
+
+    before_cfg = cfg
+    check('已初始化的目录：什么都不生成', bridge.ensure_first_run_files(), [])
+    check_true('既有 config.yaml 原样', Path(_froot, 'config.yaml').read_text(encoding='utf-8') == before_cfg)
+
+    # 密钥随机性：清空重来，两轮的 key 必须不同
+    first_key = saved['management_key']
+    Path(_froot, '.local-secrets.json').unlink()
+    Path(_froot, 'config.yaml').unlink()
+    bridge.ensure_first_run_files()
+    saved2 = json.loads(Path(_froot, '.local-secrets.json').read_text(encoding='utf-8'))
+    check_true('两轮生成的 management_key 不同（secrets 随机）',
+               saved2['management_key'] != first_key, saved2['management_key'][:12] + '…')
+
+    # 半初始化：config 在而 secrets 缺 → 不自动补、不抛、原样保留
+    Path(_froot, '.local-secrets.json').unlink()
+    keep = Path(_froot, 'config.yaml').read_text(encoding='utf-8')
+    check('半初始化：不生成、不抛', bridge.ensure_first_run_files(), [])
+    check_true('半初始化：config.yaml 原样', Path(_froot, 'config.yaml').read_text(encoding='utf-8') == keep)
+finally:
+    bridge.ROOT = _orig_root2
+    shutil.rmtree(_froot, ignore_errors=True)
+
+print()
+print('== 9. 生产数据污染闸门（E4）==')
 _db_after = (_DB_PATH.stat().st_mtime_ns, _DB_PATH.stat().st_size) if _DB_PATH.exists() else None
 check('usage-history.db 跑完前后零变化', _db_after, _DB_BEFORE)
 backups_dir = ROOT / 'backups'

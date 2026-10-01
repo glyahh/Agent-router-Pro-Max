@@ -887,6 +887,15 @@ def run(console_port: int = DEFAULT_CONSOLE_PORT, open_window: bool = True) -> i
 
     shell = Shell(console_port)
 
+    # 首启引导（HI-03）：缺 .local-secrets.json / config.yaml 就生成最小可用集。
+    # 必须在体检之前——生成完文件才齐，体检的"缺失不算半写"也就只兜真正的首启前。
+    try:
+        created = bridge.ensure_first_run_files()
+        if created:
+            log('首启已生成：' + '、'.join(created))
+    except Exception:                       # noqa: BLE001 - 引导失败不该拦住能起的启动
+        log('首启引导失败：\n' + traceback.format_exc())
+
     # 启动体检（ME-03）：一次「保存路由」改四份文件，进程在途中被强杀会留下互相
     # 矛盾的半写状态。矛盾状态下拉起网关只会把问题放大（网关读坏 config、页面读
     # 坏 plan），所以这里 fail-loud：弹窗说明问题并指向最近一次 route-switch 备份。

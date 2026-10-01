@@ -40,6 +40,7 @@ import logging
 import math
 import os
 import re
+import secrets
 import socket
 import sys
 import threading
@@ -430,6 +431,89 @@ def record_route_selector_fingerprint() -> dict:
 
 
 # --------------------------------------------------------------------------- 启动体检
+
+_FIRST_RUN_CONFIG = """\
+# Prism 首启生成的最小网关配置。上游来源为空：在控制台里加来源后这里会长出来。
+host: "127.0.0.1"
+port: 8317
+debug: false
+auth-dir: '%(auth_dir)s'
+remote-management:
+  allow-remote: false
+  # 明文写入是网关的官方约定（config.example.yaml：plaintext will be hashed on
+  # startup），网关启动时自己哈希——不必也不该在 Prism 里引入 bcrypt 依赖。
+  secret-key: "%(management_key)s"
+api-keys:
+  - "%(api_key)s"
+codex-api-key: []
+openai-compatibility: []
+"""
+
+
+def ensure_first_run_files() -> list[str]:
+    """首启引导（HI-03）：缺 .local-secrets.json / config.yaml 时生成最小可用集。
+
+    只生成缺失的文件，**绝不覆盖已存在文件**——那里面是用户的凭据。两把密钥一次
+    生成、两处落盘：management_key 同时进 .local-secrets.json（Prism 读它发 Bearer）
+    和 config.yaml 的 remote-management.secret-key（网关启动时哈希），api_key 同时
+    进 .local-secrets.json（agents 接代理端用）和 config.yaml 的 api-keys（网关放行
+    清单）——两边天然一致，不存在「密钥对不上」的首启死局。
+
+    半初始化（config.yaml 在而 .local-secrets.json 缺）**不自动补**：网关侧的
+    management key 已经是 bcrypt，Prism 造不出配对的新 key，乱写只会得到一连串
+    401 并触发网关的 IP 封禁。只记日志，让人工处理。
+    返回新建文件的文件名清单（空 = 已初始化过，一个字节没动）。
+    """
+    created: list[str] = []
+    secrets_path = ROOT / '.local-secrets.json'
+    config_path = ROOT / 'config.yaml'
+    management_key = ''
+    if not secrets_path.exists():
+        if config_path.exists():
+            log.warning('半初始化：%s 在而 %s 缺，management key 无法配对生成，'
+                        '请人工恢复后者。本次不自动补。',
+                        config_path.name, secrets_path.name)
+        else:
+            management_key = 'prism-' + secrets.token_urlsafe(24)
+            payload = {'management_key': management_key,
+                       'api_key': 'sk-prism-' + secrets.token_urlsafe(24)}
+            _atomic_write_json(secrets_path, payload)
+            created.append(secrets_path.name)
+    if not config_path.exists():
+        if management_key:
+            try:
+                stored = json.loads(secrets_path.read_text(encoding='utf-8-sig'))
+                management_key = stored.get('management_key') or management_key
+                api_key = stored.get('api_key') or ''
+            except (OSError, ValueError):
+                api_key = ''
+            text = _FIRST_RUN_CONFIG % {
+                'auth_dir': str(ROOT / 'auth'),
+                'management_key': management_key,
+                'api_key': api_key,
+            }
+            _atomic_write_text(config_path, text)
+            created.append(config_path.name)
+        elif not secrets_path.exists():
+            pass                    # 半初始化场景，上面已经记过日志
+    try:
+        (ROOT / 'auth').mkdir(exist_ok=True)   # 网关的 auth-dir 指这里，缺失会让首次登录没地方落
+    except OSError:
+        pass
+    return created
+
+
+def _atomic_write_json(path: Path, payload: dict) -> None:
+    temp = path.with_suffix(path.suffix + '.%d.tmp' % os.getpid())
+    temp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
+    os.replace(temp, path)
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    temp = path.with_suffix(path.suffix + '.%d.tmp' % os.getpid())
+    temp.write_text(text, encoding='utf-8')
+    os.replace(temp, path)
+
 
 def latest_switch_backup() -> Path | None:
     """backups\\ 下最近的 route-switch-* 目录（恢复时的第一站）。
