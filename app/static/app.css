@@ -688,7 +688,7 @@ noscript .statebox{margin:40px auto;max-width:640px}
   .graph .gacts .gbtn{transition-duration:0s}
   .graph .gnode.open > .gkids .gnode{animation:none}
   body{animation:none}
-  .wbtn .ic-max,.wbtn .ic-rest{transition-duration:0s}
+  .wbtn,.wbtn .ic-max,.wbtn .ic-rest{transition-duration:0s}
 }
 @media (max-width:860px){
   .graph .gmeta{display:none}

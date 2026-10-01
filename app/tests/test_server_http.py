@@ -306,11 +306,11 @@ try:
         check('启用令牌：静态资源不拦（页面要先加载）', resp.status, 200)
 finally:
     server.stop_server(_tokened)
+    bridge.snapshot = _real_snapshot
 
 # 纯分发：fake 实例的 server 没有 console_token 属性 → 不启用，行为与旧版完全一致
 st, _, _, _ = api('GET', '/api/theme')
 check('调试形态（无 token 属性）：/api/* 照常放行', st, 200)
-bridge.snapshot = _real_snapshot
 
 print()
 print('== 9. 生产数据污染闸门（E4）==')

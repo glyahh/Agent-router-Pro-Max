@@ -393,15 +393,19 @@ def notify_already_running(console_port: int) -> None:
     """第二次启动：告诉用户"已经在跑了"，别让他对着一个没反应的图标反复双击。
 
     以前这里只写一行日志就 return 0。打包成 exe 之后没有控制台，那行日志用户
-    永远看不到——双击、什么都没发生、再双击、还是没有，最后以为程序坏了。
-    窗口可能正收在托盘里，也可能压根没起（就是那个点 X 不退出的僵尸），所以
-    托盘和浏览器两条路都给出来。
+    看不到——双击、什么都没发生、再双击、还是没有，最后以为程序坏了。
+    窗口可能正收在托盘里，也可能压根没起（就是那个点 X 不退出的僵尸）。
+    以前还指过"用浏览器打开 8318"这条路；控制台令牌（ME-12）启用后，第二个
+    实例拿不到令牌、指过去只会看到 401，所以这条指路收掉，只留托盘。
+
+    ⚠ 这个函数必须保持**模块级**：它被 run() 的"已有实例"分支直接调用。
+    历史上它曾被缩进进 notify_error 的函数体里变成嵌套函数，run() 一走到
+    这条分支就 NameError 静默退出（第二次双击永远"没反应"的那个场景）。
     """
     _message_box(
         'Prism 已经在运行了（控制台端口 %d）。\n\n'
-        '它可能收在托盘里：右下角找一下 Prism 图标，右键 → 打开 Prism。\n'
-        '找不到图标就用浏览器打开 http://127.0.0.1:%d/ —— 后面的控制台服务是同一个。'
-        % (console_port, console_port),
+        '它可能收在托盘里：右下角找一下 Prism 图标，右键 → 打开 Prism。'
+        % console_port,
         'Prism 已经在运行', MB_ICONINFO)
 
 
@@ -597,6 +601,7 @@ class Shell:
     def __init__(self, console_port: int):
         self.console_port = console_port
         self.url = 'http://127.0.0.1:%d/' % console_port
+        self.console_token = None     # run() 里生成后挂上来；open_in_browser 拼 ?t= 用
         self.window = None
         self.icon = None
         self.httpd = None
@@ -662,9 +667,14 @@ class Shell:
             log('隐藏窗口失败：\n' + traceback.format_exc())
 
     def open_in_browser(self, *_a) -> None:
-        """托盘菜单里的"在浏览器中打开"：WebView2 万一挂了，还有条路看数据。"""
+        """托盘菜单里的"在浏览器中打开"：WebView2 万一挂了，还有条路看数据。
+
+        桌面版服务启用了控制台令牌（ME-12），不带 ?t= 的 /api/* 全是 401 ——
+        所以这里必须把令牌拼上。令牌只进这个 URL 参数、不进日志。
+        """
+        url = self.url + ('?t=' + self.console_token if self.console_token else '')
         try:
-            os.startfile(self.url)      # noqa: S606 - 打开自己的本机地址
+            os.startfile(url)           # noqa: S606 - 打开自己的本机地址
         except OSError:
             log('打不开浏览器')
 
@@ -930,6 +940,7 @@ def run(console_port: int = DEFAULT_CONSOLE_PORT, open_window: bool = True) -> i
         # 之后前端每个 /api/* 请求带头。多用户机器上第二个本地账户伪造到回环口的
         # 请求没有这个令牌，改不了网关配置。独立调试形态（python server.py）不启用。
         console_token = secrets.token_urlsafe(24)
+        shell.console_token = console_token    # open_in_browser 拼 ?t= 用
         httpd = server.start_background(console_port, token=console_token)
     except server.PortBusy as exc:
         log(str(exc))

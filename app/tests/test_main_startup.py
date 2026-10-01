@@ -39,6 +39,16 @@ import main                        # noqa: E402
 fails = []
 _DB_PATH = ROOT / 'usage-history.db'
 _DB_BEFORE = (_DB_PATH.stat().st_mtime_ns, _DB_PATH.stat().st_size) if _DB_PATH.exists() else None
+# E4 闸门基线：本文件测的 ensure_first_run_files 产出的就是这几类根文件——
+# 它们若被误写（函数改去用绝对路径绕过 bridge.ROOT 的 F-1 同类事故），这里必须红
+_ROOT_FILES = ('config.yaml', '.local-secrets.json', 'routing-plan.json')
+
+
+def _fingerprint(p):
+    return (p.stat().st_mtime_ns, p.stat().st_size) if p.exists() else None
+
+
+_ROOT_BEFORE = {n: _fingerprint(ROOT / n) for n in _ROOT_FILES}
 
 
 def check(name, got, want):
@@ -154,21 +164,36 @@ print()
 print('== 6. tray_tip 节流（now 注入，零真数据源）==')
 _orig_history = sampling.history
 shell = main.Shell(8318)
+today_calls = []
+
+
+def _fake_today():
+    today_calls.append(1)
+    return '今日请求 3 成功/1 失败'
+
+
 try:
     sampling.history = lambda days: [{'success': 3, 'failed': 1}]
+    shell._tip_today = _fake_today          # 实例级桩：数"真算了几次"
     bridge.enabled_groups = lambda: {'gpt': ['openai-official']}
     shell.gateway_state = lambda: 'ok'
     first = shell.tray_tip(now=1000.0)
     check_true('首算含今日计数与路由',
                '今日请求 3 成功/1 失败' in first and 'gpt=openai-official' in first, first)
+    check('首算调了一次今日计数', len(today_calls), 1)
     cached = shell.tray_tip(now=1000.0 + main.TRAY_TIP_INTERVAL - 1)
     check('节流窗口内返回缓存', cached, first)
+    check('节流窗口内不重算', len(today_calls), 1)
     second = shell.tray_tip(now=1000.0 + main.TRAY_TIP_INTERVAL + 0.5)
-    check_true('窗口外重算（still 同一文案时也算过）', second == first or len(second) > 0, second)
-    check_true('tip 不超 Windows szTip 上限', len(shell.tray_tip(now=2000.0)) <= main.TRAY_TIP_MAX)
+    check('窗口外真的重算了（今日计数被再次调用）', len(today_calls), 2)
+    check_true('tip 不超 Windows szTip 上限', len(second) <= main.TRAY_TIP_MAX, str(len(second)))
 finally:
     sampling.history = _orig_history
     bridge.enabled_groups = _orig_groups
+
+check_true('notify_already_running 是模块级函数（历史上曾被缩进进 notify_error 体内，'
+           '第二次启动分支一走就 NameError 静默退出）',
+           callable(getattr(main, 'notify_already_running', None)))
 
 print()
 print('== 7. 启动体检（ME-03：bridge.verify_startup_files，全在临时目录）==')
@@ -209,6 +234,11 @@ try:
     _write('routing-plan.json', json.dumps(
         {'providers': [{'id': 'alpha', 'group': 'gpt'}], 'selected': {'gpt': 'alpha'}}))
     check('旧版单字符串形状照收', bridge.verify_startup_files(), [])
+
+    _write('routing-plan.json', json.dumps(
+        {'providers': [{'id': 'alpha', 'group': 'gpt'}], 'selected': {'gpt': None}}))
+    check('组内 null = 未选（合法形状，route_selector._selected_ids 同口径）',
+          bridge.verify_startup_files(), [])
 
     _write('routing-plan.json', json.dumps(
         {'providers': [{'id': 'alpha', 'group': 'gpt'}], 'selected': {'gpt': 42}}))
@@ -278,11 +308,28 @@ try:
     check_true('两轮生成的 management_key 不同（secrets 随机）',
                saved2['management_key'] != first_key, saved2['management_key'][:12] + '…')
 
-    # 半初始化：config 在而 secrets 缺 → 不自动补、不抛、原样保留
+    # 半初始化 A：config 在而 secrets 缺 → 不自动补、不抛、原样保留
     Path(_froot, '.local-secrets.json').unlink()
     keep = Path(_froot, 'config.yaml').read_text(encoding='utf-8')
-    check('半初始化：不生成、不抛', bridge.ensure_first_run_files(), [])
-    check_true('半初始化：config.yaml 原样', Path(_froot, 'config.yaml').read_text(encoding='utf-8') == keep)
+    check('半初始化 A：不生成、不抛', bridge.ensure_first_run_files(), [])
+    check_true('半初始化 A：config.yaml 原样', Path(_froot, 'config.yaml').read_text(encoding='utf-8') == keep)
+
+    # 半初始化 B：secrets 在而 config 缺 → 以磁盘上的 secrets 补写 config，两处一致
+    Path(_froot, '.local-secrets.json').write_text(json.dumps(saved2), encoding='utf-8')
+    Path(_froot, 'config.yaml').unlink()
+    created_b = bridge.ensure_first_run_files()
+    check('半初始化 B：补出 config.yaml', created_b, ['config.yaml'])
+    cfg_b = Path(_froot, 'config.yaml').read_text(encoding='utf-8')
+    check_true('半初始化 B：config 里的 key 与 secrets 一致',
+               ('secret-key: "%s"' % saved2['management_key']) in cfg_b,
+               cfg_b[:120])
+
+    # 并发抢先（复查 M-2）：目标已存在时原子写必须放弃且绝不覆盖
+    victim = Path(_froot, 'probe.json')
+    victim.write_text('original', encoding='utf-8')
+    check('并发抢先：_atomic_write_json 返回 False', bridge._atomic_write_json(victim, {'x': 1}), False)
+    check('并发抢先：原内容未覆盖', victim.read_text(encoding='utf-8'), 'original')
+    check_true('并发抢先：临时文件被撤掉', not list(Path(_froot).glob('*.tmp')))
 finally:
     bridge.ROOT = _orig_root2
     shutil.rmtree(_froot, ignore_errors=True)
@@ -291,6 +338,9 @@ print()
 print('== 9. 生产数据污染闸门（E4）==')
 _db_after = (_DB_PATH.stat().st_mtime_ns, _DB_PATH.stat().st_size) if _DB_PATH.exists() else None
 check('usage-history.db 跑完前后零变化', _db_after, _DB_BEFORE)
+for _n in _ROOT_FILES:
+    check('生产 %s 零变化（首启引导若绕过 bridge.ROOT 这里必须红）' % _n,
+          _fingerprint(ROOT / _n), _ROOT_BEFORE[_n])
 backups_dir = ROOT / 'backups'
 leaked = sorted(p.name for p in backups_dir.glob('prism-*')) if backups_dir.is_dir() else []
 check('生产 backups/ 没有漏进临时目录', leaked, [])

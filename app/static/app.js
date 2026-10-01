@@ -176,6 +176,8 @@
       if (m) {
         try { _consoleToken = decodeURIComponent(m[1]); sessionStorage.setItem('prism-ct', _consoleToken); }
         catch (e) { _consoleToken = ''; }
+        // 读到就抹掉地址栏里的 ?t=：令牌不留在可见 URL 与历史记录里（ME-12）
+        try { history.replaceState(null, '', location.pathname + location.hash); } catch (e) {}
       } else {
         try { _consoleToken = sessionStorage.getItem('prism-ct') || ''; }
         catch (e) { _consoleToken = ''; }

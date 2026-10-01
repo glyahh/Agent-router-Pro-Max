@@ -172,6 +172,18 @@ def main() -> int:
     orig_static, orig_spath = server.STATIC_DIR, server.SETTINGS_PATH
     orig_gget, orig_gput = bridge.gateway_get, bridge.gateway_put
     orig_prune, orig_apply = sampling.prune, server.apply_settings
+
+    def _restore():
+        server.STATIC_DIR, server.SETTINGS_PATH = orig_static, orig_spath
+        bridge.gateway_get, bridge.gateway_put = orig_gget, orig_gput
+        sampling.prune = orig_prune
+        server.apply_settings = orig_apply
+
+    # E4 兜底：正常路径在断言后恢复；任何异常路径（含 sys.exit）由 atexit 收尾，
+    # 桩不会漏在生产解释器里——虽然这里进程随即退出，纪律上不留侥幸（复查 L-4）
+    import atexit
+    atexit.register(_restore)
+
     server.STATIC_DIR = static
     server.SETTINGS_PATH = work / 'settings.json'
     bridge.gateway_get = fake_gateway_get
@@ -197,7 +209,9 @@ def main() -> int:
     cmd = [browser, '--headless=new', '--disable-gpu', '--no-first-run',
            '--no-default-browser-check', '--disable-extensions',
            '--user-data-dir=' + str(work / 'profile'),
-           '--virtual-time-budget=90000', '--window-size=1600,900', live + '/#/settings']
+           # 虚拟时间预算给足 5 分钟：app.js 自己每 5 秒轮询一次，虚拟时间会被
+           # 这些后台定时器同样快进消耗，90s 时 S1 段偶发没跑到（实测 5 连跑 2 次丢）
+           '--virtual-time-budget=300000', '--window-size=1600,900', live + '/#/settings']
     print('启动:', pathlib.Path(browser).name, '控制台:', live)
     proc = None
     try:
@@ -219,18 +233,14 @@ def main() -> int:
     except Exception:
         pass
 
-    # ---- 恢复桩（E4：先恢复，再判——判据用的快照都已取完）----
-    server.STATIC_DIR, server.SETTINGS_PATH = orig_static, orig_spath
-    bridge.gateway_get, bridge.gateway_put = orig_gget, orig_gput
-    sampling.prune = orig_prune
-    server.apply_settings = orig_apply
+    # ---- 恢复桩（E4：先恢复，再判——判据用的快照都已取完；异常路径由 atexit 兜底）----
+    _restore()
 
     if not _post_log:
         print('0 次 POST——设置页 mount 失败或动作没跑。浏览器 stderr 末尾：')
         print((getattr(proc, 'stderr', '') or '')[-1200:])
         return 4
 
-    n_s2 = len([t for t in _post_log if t <= _post_log[1] + 0.001][:2]) if len(_post_log) >= 2 else len(_post_log)
     note('S2a', len(_post_log) >= 2,
          '排队链：第一次失败后第二次仍真的发了 POST（共 %d 次）' % len(_post_log),
          '时间线 %r' % [round(t - _post_log[0], 2) for t in _post_log])

@@ -467,35 +467,37 @@ def ensure_first_run_files() -> list[str]:
     created: list[str] = []
     secrets_path = ROOT / '.local-secrets.json'
     config_path = ROOT / 'config.yaml'
-    management_key = ''
+    # 两个文件各自独立判断（不是 if/elif 链——全新首启两件都要生成）
     if not secrets_path.exists():
         if config_path.exists():
-            log.warning('半初始化：%s 在而 %s 缺，management key 无法配对生成，'
-                        '请人工恢复后者。本次不自动补。',
+            # 半初始化 A：config 在而 secrets 缺。网关侧的 management key 已经是
+            # bcrypt，Prism 造不出配对的新 key——乱写只会得到一连串 401 并触发
+            # 网关的 IP 封禁。只记日志，让人工处理。
+            log.warning('半初始化：%s 在而 %s 缺，management key 无法配对生成，请人工恢复后者。',
                         config_path.name, secrets_path.name)
         else:
-            management_key = 'prism-' + secrets.token_urlsafe(24)
-            payload = {'management_key': management_key,
+            payload = {'management_key': 'prism-' + secrets.token_urlsafe(24),
                        'api_key': 'sk-prism-' + secrets.token_urlsafe(24)}
-            _atomic_write_json(secrets_path, payload)
-            created.append(secrets_path.name)
+            if _atomic_write_json(secrets_path, payload):
+                created.append(secrets_path.name)
     if not config_path.exists():
-        if management_key:
-            try:
-                stored = json.loads(secrets_path.read_text(encoding='utf-8-sig'))
-                management_key = stored.get('management_key') or management_key
-                api_key = stored.get('api_key') or ''
-            except (OSError, ValueError):
-                api_key = ''
-            text = _FIRST_RUN_CONFIG % {
-                'auth_dir': str(ROOT / 'auth'),
-                'management_key': management_key,
-                'api_key': api_key,
-            }
-            _atomic_write_text(config_path, text)
-            created.append(config_path.name)
-        elif not secrets_path.exists():
-            pass                    # 半初始化场景，上面已经记过日志
+        # 补 config 一律**读磁盘**上的 secrets（哪怕这份 secrets 是刚写或并发实例
+        # 写的）——两处密钥天然一致，不存在「config 是 A 的 key、secrets 是 B 的
+        # key」的死局（复查 M-2）。
+        try:
+            stored = json.loads(secrets_path.read_text(encoding='utf-8-sig'))
+        except (OSError, ValueError):
+            stored = None
+        if isinstance(stored, dict) and stored.get('management_key'):
+            text = _FIRST_RUN_CONFIG % {'auth_dir': str(ROOT / 'auth'),
+                                        'management_key': stored['management_key'],
+                                        'api_key': stored.get('api_key') or ''}
+            if _atomic_write_text(config_path, text):
+                created.append(config_path.name)
+        else:
+            # 半初始化 B：secrets 在但里面没有可用的 management_key
+            log.warning('半初始化：%s 缺，而 %s 里读不到 management_key——请人工处理，不自动生成。',
+                        config_path.name, secrets_path.name)
     try:
         (ROOT / 'auth').mkdir(exist_ok=True)   # 网关的 auth-dir 指这里，缺失会让首次登录没地方落
     except OSError:
@@ -503,16 +505,27 @@ def ensure_first_run_files() -> list[str]:
     return created
 
 
-def _atomic_write_json(path: Path, payload: dict) -> None:
+def _atomic_write_json(path: Path, payload: dict) -> bool:
+    """原子写。replace 前复查目标是否存在：并发实例抢先落盘时放弃并撤掉临时文件，
+    绝不覆盖（HI-03 的承诺；检查-写入之间的窗口收窄到一次系统调用内也无妨，
+    os.replace 本身是原子的，复查挡的是「检查之后别人写了」的交错）。"""
     temp = path.with_suffix(path.suffix + '.%d.tmp' % os.getpid())
     temp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
+    if path.exists():
+        temp.unlink(missing_ok=True)
+        return False
     os.replace(temp, path)
+    return True
 
 
-def _atomic_write_text(path: Path, text: str) -> None:
+def _atomic_write_text(path: Path, text: str) -> bool:
     temp = path.with_suffix(path.suffix + '.%d.tmp' % os.getpid())
     temp.write_text(text, encoding='utf-8')
+    if path.exists():
+        temp.unlink(missing_ok=True)
+        return False
     os.replace(temp, path)
+    return True
 
 
 def latest_switch_backup() -> Path | None:
@@ -585,6 +598,8 @@ def _plan_consistency(plan: dict) -> list[str]:
     if not isinstance(selected, dict):
         return problems + ['routing-plan.json 的 selected 不是对象']
     for group, picks in selected.items():
+        if picks is None:
+            continue                      # 组内 null = 未选，合法形状（route_selector._selected_ids 同口径）
         if isinstance(picks, str):        # 旧版单字符串形状：/api/select 两种都吃，这里同样
             picks = [picks]
         if not isinstance(picks, list):
