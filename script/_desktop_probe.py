@@ -145,6 +145,65 @@ PROBE_JS = r"""
   }
 
   async function run() {
+    /* WA 窗口交互过渡动画（2026-10-01 用户新需求：按下反馈 / 图标交叉淡切 / 首帧淡入）。
+       必须放在 freeze() **之前**：freeze 注入 `*{transition:none!important}` 防量到
+       过渡中间态（DEV-RULES B5），但 WA 断言的恰恰是"过渡存在"——冻结后量必然
+       transition=none（实测踩过一次）。这组全是静态读取，不派发事件，无需冻结。
+       :active 与 keyframes 走 CSSOM 规则查找——getComputedStyle 只给**当前**状态，
+       合成事件不会真的把按钮按下去。 */
+    function hasRule(sel) {
+      var found = false;
+      Array.prototype.slice.call(document.styleSheets).forEach(function (sh) {
+        try {
+          Array.prototype.slice.call(sh.cssRules).forEach(function (r) {
+            if (r.selectorText === sel) found = true;
+          });
+        } catch (e) { /* 跨域样式表读不到，跳过 */ }
+      });
+      return found;
+    }
+    function findRule(match) {
+      var out = null;
+      Array.prototype.slice.call(document.styleSheets).forEach(function (sh) {
+        try {
+          Array.prototype.slice.call(sh.cssRules).forEach(function (r) {
+            if (r.selectorText && r.selectorText.indexOf(match) >= 0) out = r;
+          });
+        } catch (e) { /* 跨域样式表读不到，跳过 */ }
+      });
+      return out;
+    }
+    rec('WA1', '窗口按钮有按下反馈（.wbtn:active 规则存在）',
+        hasRule('.wbtn:active'),
+        hasRule('.wbtn:active') ? '' : '样式表里没有 .wbtn:active');
+    var restRules = [];
+    Array.prototype.slice.call(document.styleSheets).forEach(function (sh) {
+      try {
+        Array.prototype.slice.call(sh.cssRules).forEach(function (r) {
+          if (r.selectorText && r.selectorText.indexOf('.ic-rest') >= 0) restRules.push(r);
+        });
+      } catch (e) { /* 跨域样式表读不到，跳过 */ }
+    });
+    // 交叉淡切拆在两条规则里：一条给 transition（ic-max 与 ic-rest 共用），
+    // 一条给默认态 opacity:0。两条都在才算"淡切"，单看哪条都会误判
+    var hasFade = restRules.some(function (r) { return r.style.transition.indexOf('opacity') >= 0; });
+    var hasHidden = restRules.some(function (r) { return r.style.opacity === '0'; });
+    rec('WA2', '最大化/还原图标是交叉淡切（opacity 过渡 + 默认隐藏）',
+        hasFade && hasHidden,
+        restRules.length
+          ? restRules.map(function (r) { return r.selectorText + ' {' + r.style.cssText + '}'; }).join(' | ')
+          : '找不到 .ic-rest 规则');
+    var bootRule = null;
+    Array.prototype.slice.call(document.styleSheets).forEach(function (sh) {
+      try {
+        Array.prototype.slice.call(sh.cssRules).forEach(function (r) {
+          if (r.type === CSSRule.KEYFRAMES_RULE && r.name === 'prism-boot') bootRule = r;
+        });
+      } catch (e) { /* 跨域样式表读不到，跳过 */ }
+    });
+    rec('WA3', '首帧淡入（样式表里有 prism-boot 进场动画）',
+        !!bootRule, bootRule ? '' : '样式表里没有 @keyframes prism-boot');
+
     freeze();
 
     /* F1 满宽满铺 */

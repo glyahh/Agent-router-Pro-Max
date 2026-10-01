@@ -88,7 +88,10 @@ html,body{height:100%}
 /* html/body 透明：让 DWM 的 Mica 能透上来。见下面「无原生标题栏 + Mica」段。 */
 html,body{margin:0;background:transparent;color:var(--fg);font-family:var(--sans);
   font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased}
-body{overflow:hidden;-webkit-user-select:none;user-select:none}
+body{overflow:hidden;-webkit-user-select:none;user-select:none;
+     /* 首帧淡入：Mica 背景不动，只有内容层进场（prefers-reduced-motion 下豁免，见文件尾） */
+     animation:prism-boot .18s ease-out}
+@keyframes prism-boot{from{opacity:0}}
 /* 开放文本选择：代码块、日志行、输入控件与数据路径 */
 input, textarea, select, [contenteditable],
 pre, code, .code, .monospace, .mono,
@@ -154,16 +157,24 @@ a{color:inherit;text-decoration:none}
       -webkit-user-select:none;user-select:none}
 .wbtn{width:46px;height:var(--top-h);display:grid;place-items:center;padding:0;
       border:0;background:transparent;color:var(--fg2);cursor:default;
+      position:relative;                 /* 最大化/还原两个图标的定位上下文 */
       transition:background .12s,color .12s}
 .wbtn svg{width:10px;height:10px;fill:none;stroke:currentColor;stroke-width:1}
 .wbtn:hover{background:var(--hover);color:var(--fg)}
+/* 按下比悬停深一档：系统标题栏按钮的手感（背景的变化走同一条 transition） */
+.wbtn:active{background:var(--line)}
 .wbtn:focus-visible{outline:none;box-shadow:inset 0 0 0 2px var(--line3)}
-/* 关闭键的悬停是唯一允许用饱和红的地方：系统级约定，用户靠它找位置 */
+/* 关闭键的悬停是唯一允许用饱和红的地方：系统级约定，用户靠它找位置。
+   active 不另配色——悬停已是 --bad，按下保持它（Windows 的关闭键也这样） */
 .wbtn.close:hover{background:var(--bad);color:var(--onaccent)}
-/* 最大化/还原两个图标按状态切换，类名由 app.js 打（状态问系统的 IsZoomed） */
-.wbtn .ic-rest{display:none}
-.wbtn.max .ic-max{display:none}
-.wbtn.max .ic-rest{display:block}
+/* 最大化/还原两个图标按状态交叉淡切（类名由 app.js 打，状态问系统的 IsZoomed）。
+   原先是 display:none 硬切——display 参与不了过渡，图标是瞬间蹦出来的；
+   改成两枚绝对定位叠加、opacity+scale+rotate 过渡，切换才是"变过去"的 */
+.wbtn .ic-max,.wbtn .ic-rest{position:absolute;inset:0;margin:auto;
+      transition:opacity .14s,transform .14s}
+.wbtn .ic-rest{opacity:0;transform:scale(.5) rotate(-90deg)}
+.wbtn.max .ic-max{opacity:0;transform:scale(.5) rotate(90deg)}
+.wbtn.max .ic-rest{opacity:1;transform:none}
 
 /* ── 主体 ─────────────────────────────── */
 main{background:var(--bg);padding:32px 32px 40px}
@@ -676,6 +687,8 @@ noscript .statebox{margin:40px auto;max-width:640px}
   .graph .gkids,.graph .grow,.graph .ghead,.graph .gacts,.graph .gdot,.graph .gchev,
   .graph .gacts .gbtn{transition-duration:0s}
   .graph .gnode.open > .gkids .gnode{animation:none}
+  body{animation:none}
+  .wbtn .ic-max,.wbtn .ic-rest{transition-duration:0s}
 }
 @media (max-width:860px){
   .graph .gmeta{display:none}
