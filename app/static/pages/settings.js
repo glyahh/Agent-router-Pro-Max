@@ -31,39 +31,39 @@
     {
       id: 'g-debug', scope: 'gateway', key: 'debug', kind: 'bool',
       label: 'Debug 模式',
-      hint: '网关自身调试日志。排障时开，平时关着省磁盘。'
+      hint: '网关自身调试日志。'
     },
     {
       id: 'g-proxy', scope: 'gateway', key: 'proxy_url', kind: 'text', mono: true,
       placeholder: 'http://127.0.0.1:7897',
       label: '上游代理',
-      hint: '网关访问上游走这个代理。留空 = 直连。改错会让所有来源一起失联。'
+      hint: '留空 = 直连。改错会让所有来源一起失联。'
     },
     {
       id: 'g-retry', scope: 'gateway', key: 'request_retry', kind: 'int', min: 0, max: 99, unit: '次',
       label: '请求重试次数',
-      hint: '上游失败后的重试次数，0 = 不重试。给到 3 以上会把偶发 5xx 拖长。'
+      hint: '0 = 不重试。'
     },
     {
       id: 'g-reqlog', scope: 'gateway', key: 'request_log', kind: 'bool',
       label: '请求日志',
-      hint: '把每次请求落盘。排查“为什么这个来源 403”时有用，长期开着很吃盘。'
+      hint: '把每次请求落盘，长期开着很吃盘。'
     },
     {
       id: 'a-auto', scope: 'app', key: 'autostart', kind: 'bool',
       label: '开机自启',
-      hint: '写 HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run，登录后自动起 Prism。'
+      hint: '登录后自动启动 Prism。'
     },
     {
       id: 'a-close', scope: 'app', key: 'close_to_tray', kind: 'seg',
       label: '关闭窗口时',
-      hint: '选「到托盘」则点 × 只收起窗口，网关继续跑；选「直接退出」则关掉 Prism 本体。',
+      hint: '点 × 只收起窗口，网关继续跑。',
       options: [{ v: true, t: '到托盘' }, { v: false, t: '直接退出' }]
     },
     {
       id: 'a-theme', scope: 'app', key: 'theme_mode', kind: 'seg',
       label: '外观主题',
-      hint: '支持跟随系统或固定浅色/深色主题，即时生效。',
+      hint: '',
       options: [
         { v: 'system', t: '跟随系统' },
         { v: 'light', t: '浅色' },
@@ -73,7 +73,7 @@
     {
       id: 'a-interval', scope: 'app', key: 'sample_interval_sec', kind: 'int', min: 10, max: 86400, unit: '秒',
       label: '用量采样间隔',
-      hint: '默认 600（10 分钟）。调小会让 Prism 更频繁地去读网关的用量接口。'
+      hint: '默认 600（10 分钟）。'
     },
     {
       id: 'a-retention', scope: 'app', key: 'retention_days', kind: 'int', min: 1, max: 3650, unit: '天',
@@ -660,7 +660,7 @@
       c.row = h('div', { class: 'ps-row' }, [
         h('div', {}, [
           h('div', { class: 'ps-lbl', text: d.label }),
-          h('div', { class: 'ps-hint', text: d.hint })
+          d.hint ? h('div', { class: 'ps-hint', text: d.hint }) : null
         ]),
         stat,
         ctl
@@ -711,7 +711,7 @@
           h('div', { class: 'ps-lbl', text: '高级设置' }),
           h('div', {
             class: 'ps-hint',
-            text: '认证文件、OAuth 登录、原始 YAML 编辑仍在 CLIProxyAPI 官方面板里，Prism 不重做这些。'
+            text: '认证文件、OAuth 登录、原始 YAML 编辑在 CLIProxyAPI 官方面板。'
           })
         ]),
         h('div', { class: 'ps-ctl' }, [
@@ -721,14 +721,9 @@
       ]);
     }
 
-    root.appendChild(buildSection('//', '网关', 'gateway', byScope('gateway'),
-      h('div', { class: 'ps-note', text: '这四项逐条 PUT /v0/management/<key>，不整份写回 config —— 整份 PUT 会把 host / port / auth-dir / remote-management 一起冲掉。' })));
+    root.appendChild(buildSection('//', '网关', 'gateway', byScope('gateway')));
 
-    root.appendChild(buildSection('//', '应用', 'app', byScope('app'),
-      // 路径写「项目根目录」而不是绝对路径：前端拿不到安装位置（后端没有暴露
-      // settings.json 路径的接口），写死 D:\... 只在这台机器上成立。这里要纠正的
-      // 是「在 app\ 下」这个过时的说法——实际是 bridge.ROOT / 'settings.json'。
-      h('div', { class: 'ps-note', text: '应用项存在项目根目录的 settings.json —— 跟 config.yaml、routing-plan.json 同一层，不在 app\\ 目录里。' })));
+    root.appendChild(buildSection('//', '应用', 'app', byScope('app')));
 
     var advSec = h('div', { class: 'sec' }, [
       h('div', { class: 'sechead' }, [
@@ -777,7 +772,7 @@
           showBanner('部分设置读不到',
             notes.map(function (n) { return degradeLine(n, data); }).join('　'), [
             h('button', { class: 'btn', type: 'button', text: '重新读取', onclick: load }),
-            h('a', { class: 'btn ps-btn', href: ADVANCED_URL, target: '_blank', rel: 'noopener noreferrer', text: '去官方面板看看' })
+            h('a', { class: 'btn ps-btn', href: ADVANCED_URL, target: '_blank', rel: 'noopener noreferrer', text: '打开官方面板' })
           ]);
         }
         setStatusAll('idle', '');
@@ -789,7 +784,7 @@
         loadFailed = true;
         showBanner('读不到设置', msg + '　—　先确认 8317 网关和 8318 控制台都在跑，再点重新读取。', [
           h('button', { class: 'btn', type: 'button', text: '重新读取', onclick: load }),
-          h('a', { class: 'btn ps-btn', href: ADVANCED_URL, target: '_blank', rel: 'noopener noreferrer', text: '去官方面板看看' })
+          h('a', { class: 'btn ps-btn', href: ADVANCED_URL, target: '_blank', rel: 'noopener noreferrer', text: '打开官方面板' })
         ]);
         refreshSummary();
       });

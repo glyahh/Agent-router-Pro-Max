@@ -811,7 +811,7 @@
           hash: '#/home',
           sourceId: s.id,
           desc: (s.group ? s.group.toUpperCase() + ' · ' : '') + shortHost(s.base_url),
-          badge: '供应商'
+          badge: '来源'
         });
       });
     }
@@ -822,7 +822,7 @@
     var inp = h('input', {
       type: 'search',
       class: 'pal-inp',
-      placeholder: '搜索页面或供应商 (支持直达/过滤)...',
+      placeholder: '搜索页面或来源 (支持直达/过滤)...',
       autocomplete: 'off',
       spellcheck: 'false'
     });
@@ -862,7 +862,7 @@
     function renderList() {
       clear(list);
       if (!filtered.length) {
-        list.appendChild(h('div', { class: 'pal-empty', text: '未找到匹配的页面或供应商' }));
+        list.appendChild(h('div', { class: 'pal-empty', text: '未找到匹配的页面或来源' }));
         return;
       }
       filtered.forEach(function (it, i) {
@@ -952,7 +952,7 @@
             hash: '#/home',
             sourceId: s.id,
             desc: (s.group ? s.group.toUpperCase() + ' · ' : '') + shortHost(s.base_url),
-            badge: '供应商'
+            badge: '来源'
           });
         }
       });

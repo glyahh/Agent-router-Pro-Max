@@ -519,8 +519,8 @@
 
     if (!merged.length) {
       html += emptySlotHTML('暂无请求计数',
-        since + '还没有经过任一来源的请求。这一块的数字来自网关的内存计数，不是持久化统计——'
-        + '网关重启即归零；长期趋势看下面的「长期历史」。') + '</div>';
+        since + '还没有经过任一来源的请求。计数不持久化，网关重启即归零；'
+        + '长期趋势看「长期历史」。') + '</div>';
       return html;
     }
 
@@ -667,7 +667,7 @@
     var head = '<div class="sechead"><span class="cmt">//</span>'
       + '<span class="stitle">长期历史</span><span class="hr"></span>'
       + seg + rangeSeg
-      + '<span class="hint">每 10 分钟采样一次 · 存在 usage-history.db</span></div>';
+      + '<span class="hint">每 10 分钟采样一次</span></div>';
 
     var html = '<div class="sec">' + head;
     if (!rows.length) {

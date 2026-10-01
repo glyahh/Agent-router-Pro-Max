@@ -381,7 +381,7 @@
       ['运行状态', runCell, h('span', { class: 'hint', text: runHint })],
       ['网关身份', identCell, h('span', { class: 'hint', text: identHint })],
       ['端口', String(port), h('span', { class: 'hint', text: '本地管理 API' })],
-      ['网关版本', verCell, h('span', { class: 'hint', text: '取自 logs\\main.log 的启动行' })],
+      ['网关版本', verCell, h('span', { class: 'hint', text: '取自网关启动日志' })],
       // 三态：true=一致 / false=读不通或不一致 / null=还读不到，无从判断。
       // 前两个走绿红，"未知"单独给黄色——它会显示成"异常"的话，
       // 用户会去改 config.yaml，而实际该做的是先把网关连上。

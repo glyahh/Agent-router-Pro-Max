@@ -528,7 +528,7 @@
 
     if ($filterBadge) {
       $filterBadge.style.display = '';
-      $filterBadge.textContent = '匹配 ' + totalMatches + ' 个模型 · ' + matchedProvs + ' 家供应商';
+      $filterBadge.textContent = '匹配 ' + totalMatches + ' 个模型 · ' + matchedProvs + ' 个来源';
     }
 
     renderTree();
@@ -583,7 +583,7 @@
     var expandAllBtn = h('button', {
       class: 'btn sm home-tool-btn',
       type: 'button',
-      title: '一键全部展开所有分组与供应商模型列表',
+      title: '一键全部展开所有分组与来源模型列表',
       onclick: function (e) {
         e.preventDefault();
         expandAllNodes();
@@ -593,7 +593,7 @@
     var collapseAllBtn = h('button', {
       class: 'btn sm home-tool-btn',
       type: 'button',
-      title: '一键全部折叠所有分组与供应商卡片',
+      title: '一键全部折叠所有分组与来源卡片',
       onclick: function (e) {
         e.preventDefault();
         collapseAllNodes();
@@ -808,7 +808,7 @@
       ];
       var kids = provs.map(function (p) { return sourceNode(a, g, p); });
       if (!kids.length) {
-        kids = [h('div', { class: 'gnote', text: '该分组暂无来源。用下面的「＋ 添加供应商」加一个。' })];
+        kids = [h('div', { class: 'gnote', text: '该分组暂无来源。用下面的「＋ 添加来源」加一个。' })];
       } else if (on > 1) {
         var heads = provs.filter(function (p) { return isOn(p.id) && !(p.head || '').trim(); });
         if (heads.length > 1) {
@@ -1186,13 +1186,12 @@
     var inp = h('input', { value: cur, placeholder: '例如 srapi（留空 = 无头主来源）' });
     var body = h('div', null,
       h('div', { class: 'note', style: 'padding:0 0 10px' },
-        '渠道头拼在客户端看到的模型 ID 前面：' + (cur || '（无头）') + '/' +
+        '客户端看到的模型 ID 会变成：' + (cur || '（无头）') + '/' +
         (modelList(p)[0] || '模型') + '。'),
       h('div', { class: 'f' }, h('label', null, '渠道头'), inp),
       h('div', { class: 'note' },
-        '规则：24 个字符以内的小写字母、数字、点、下划线、连字符，不能含斜杠或空格。' +
-        '同一分组最多一个来源没有渠道头（它保留干净的模型 ID，是主来源）。' +
-        '改完在**下一次「保存路由」**时生效。'));
+        '同一分组最多一个来源无渠道头（它保留干净的模型 ID）。' +
+        '改完在下一次「保存路由」时生效。'));
     setTimeout(function () { try { inp.focus(); inp.select(); } catch (e) {} }, 0);
     S.ctx.dialog({ title: '渠道头 · ' + (p.label || p.id), body: body, okText: '保存' })
       .then(function (yes) {
@@ -1209,8 +1208,7 @@
           .then(function (r) {
             S.busy = false;
             flash('ok', (r.changed ? '渠道头已改为「' + (r.head || '（无头）') + '」' :
-              '渠道头没变') + '。要让它生效，点「保存路由」——config.yaml 与客户端目录' +
-              '会在那一步一起按新头重建。');
+              '渠道头没变') + '。要让它生效，点「保存路由」。');
             return reload();
           }).catch(function (e) {
             S.busy = false;
@@ -1391,7 +1389,7 @@
     if (!f) {
       $form.appendChild(h('div', { class: 'addsrc' },
         h('div', { class: 'as-open' },
-          h('button', { class: 'btn pri', type: 'button', onclick: function () { openForm('create'); } }, '＋ 添加供应商'),
+          h('button', { class: 'btn pri', type: 'button', onclick: function () { openForm('create'); } }, '＋ 添加来源'),
           h('span', { class: 'as-line' }),
           h('span', { class: 'hint', text: '新增来源默认是停用的，保存并启用后才参与路由' }))));
       return;
@@ -1399,7 +1397,7 @@
     var isCreate = f.mode === 'create';
     var box = h('div', { class: 'form' });
     box.appendChild(h('div', { class: 'formh' },
-      h('span', { class: 't', text: isCreate ? '+ 添加供应商' : '编辑来源 · ' + f.id }),
+      h('span', { class: 't', text: isCreate ? '+ 添加来源' : '编辑来源 · ' + f.id }),
       h('span', { class: 'hr' }),
       h('span', { class: 'tag', text: isCreate ? 'ID 自动生成' : (isCustom(byId(f.id)) ? '自定义来源' : '内置来源') })));
 
@@ -1758,9 +1756,9 @@
 
     wrap.appendChild(h('div', { class: 'sec' },
       h('div', { class: 'sechead' },
-        h('span', { class: 'cmt', text: '//' }), h('span', { class: 'stitle', text: '添加供应商' }),
+        h('span', { class: 'cmt', text: '//' }), h('span', { class: 'stitle', text: '添加来源' }),
         h('span', { class: 'hr' }),
-        h('span', { class: 'hint', text: '写入 config.yaml + routing-plan.json 两处' })),
+        ),
       ($form = h('div'))));
 
     wrap.appendChild($acts = h('div'));
