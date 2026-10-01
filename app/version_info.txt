@@ -1,0 +1,35 @@
+# PyInstaller 的版本资源文件。打包时用 --version-file 指定，让 exe 的
+# 「属性 → 详细信息」里有内容，而不是一片空白——这是"成品"和"一个能跑的文件"
+# 的差别之一。中文代号 2052 / 1200(Unicode)。
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=(1, 0, 0, 0),
+    prodvers=(1, 0, 0, 0),
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo(
+      [
+        StringTable(
+          '080404B0',
+          [
+            StringStruct('CompanyName', 'Prism'),
+            StringStruct('FileDescription', 'Prism · 本地模型网关控制台'),
+            StringStruct('FileVersion', '1.0.0.0'),
+            StringStruct('InternalName', 'Prism'),
+            StringStruct('LegalCopyright', ''),
+            StringStruct('OriginalFilename', 'Prism.exe'),
+            StringStruct('ProductName', 'Prism'),
+            StringStruct('ProductVersion', '1.0.0.0')
+          ]
+        )
+      ]
+    ),
+    VarFileInfo([VarStruct('Translation', [2052, 1200])])
+  ]
+)

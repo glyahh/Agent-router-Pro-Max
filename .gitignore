@@ -1,0 +1,50 @@
+# Prism 的 .gitignore
+#
+# 为什么存在：这个目录里有**活动的明文凭据**（见下面第一节）。没有这份文件时，
+# 一次 `git add -A` 就会把上游密钥、OAuth 刷新令牌、网关管理密钥一起提交。
+# 相关审查条目：CR-01（docs/reviews/2026-09-30-enterprise-readiness-review.md）。
+#
+# 纪律：**先有这份文件，再谈 git init。** 顺序反了就不可逆。
+#
+# ⚠ git 的 .gitignore **不支持行内注释**：`config.yaml  # 说明` 整行会被当成
+# 文件名模式，密钥文件就这么进库了（2026-10-01 init 时实测踩到，幸好 commit 前
+# 抓住）。所有注释必须独占一行。
+
+# ── 凭据：绝不入库 ────────────────────────────────────────────────
+# config.yaml 含 5 条 codex-api-key 的 sk- + 1 条 user_ + 管理密钥 bcrypt
+config.yaml
+# .local-secrets.json 含网关管理密钥 + 本地 api_key
+.local-secrets.json
+# auth/ 含 OAuth 令牌（access/refresh/id）—— 等同密码
+auth/
+# settings.json 是本机设置，含自启等个人偏好
+settings.json
+
+# ── 含凭据的历史副本：同样绝不入库 ─────────────────────────────────
+# backups/ 是每次改路由的 config.yaml 快照，里面就是明文密钥
+backups/
+# logs/ 是网关日志：含请求记录，且错误单可能带请求体
+logs/
+# usage-history.db 是采样库
+usage-history.db
+
+# ── 构建产物：能重新生成，不进版本库 ──────────────────────────────
+Prism.exe
+_internal/
+build/
+dist/
+*.spec
+
+# ── 环境 ────────────────────────────────────────────────────────
+# app/.venv 100 MB+，且含 pip 自带的 stdlib 副本
+app/.venv/
+.pytest_cache/
+
+# ── 运行时杂项 ──────────────────────────────────────────────────
+*.log
+*.tmp
+__pycache__/
+*.py[cod]
+.route_selector.lock.tmp
+# zcode 会话的计划文件，过程产物
+.zcode/

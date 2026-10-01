@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- light dark：深色主题下让 WebView2 把滚动条、表单控件、默认底色也换成深色。
+     data-theme 由 server.py 在服务本文件时按**有效主题**替换（设置里显式选了浅/深就听它的，
+     否则跟随系统），首屏就对、不闪白。app.js 每 5 秒跟一次 /api/theme。
+     见 app.css 的深色主题段与 ADR-0010。 -->
+<meta name="color-scheme" content="light dark">
+<title>Prism · 本地模型网关控制台</title>
+<!-- 内联图标，省一个可能 404 的请求；形状对应 design/logo-prism.svg 的三路汇聚 -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M8 22 16 7l8 15' stroke='%230D0D0D' stroke-width='2.6' fill='none' stroke-linejoin='round'/%3E%3Cpath d='M11.5 17h9' stroke='%230D0D0D' stroke-width='2.6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="win">
+
+  <header class="top">
+    <!-- pywebview-drag-region 是 pywebview 的拖动区标记（等价 Electron 的
+         -webkit-app-region: drag）。main.py 把 DRAG_REGION_DIRECT_TARGET_ONLY 设成
+         True，所以只有**直接命中**这两个元素的点击才拖窗口——点在 tab / 按钮上不会
+         顺带把窗口拖走。nav 本身也带类，于是顶栏中间那段空白同样能拖。 -->
+    <nav class="nav pywebview-drag-region">
+      <div class="brand pywebview-drag-region">PRI<span>SM</span></div>
+      <div class="tabs" id="tabs">
+        <a href="#/home"     data-nav="home">首页</a>
+        <a href="#/usage"    data-nav="usage">用量</a>
+        <a href="#/monitor"  data-nav="monitor">监控</a>
+        <a href="#/logs"     data-nav="logs">日志</a>
+        <a href="#/settings" data-nav="settings">设置</a>
+      </div>
+      <div class="navr">
+        <span class="kbd" id="kbdHint" title="打开页面跳转面板">Ctrl K</span>
+        <!-- 端口号由 app.js 按实际地址填（setPort）——网关端口来自监控数据
+             （认 PRISM_GATEWAY_BASE），控制台端口来自 location.port。这里的
+             破折号是占位，别写死数字：控制台换端口、网关指向别处时那数字就成假的了。 -->
+        <span class="live" id="liveGw" title="网关端口"><span class="dot idle"></span><span id="liveGwPort">—</span></span>
+        <span class="live" id="liveCtl" title="控制台服务"><span class="dot idle"></span><span id="liveCtlPort">—</span></span>
+      </div>
+      <!-- 窗口按钮：原生标题栏被 main.py 的 hide_native_titlebar() 摘掉了
+           （Electron 的 titleBarStyle:'hidden' 等价物），这三个是自绘的。
+           图标内联、1px 线条、走 currentColor，不引任何图标依赖。
+           在浏览器里调试时 window.pywebview 不存在，app.js 会把整组藏起来。 -->
+      <div class="wctl" id="wctl">
+        <button class="wbtn" id="wMin" type="button" title="最小化" aria-label="最小化">
+          <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M0 5.5h10"/></svg>
+        </button>
+        <button class="wbtn" id="wMax" type="button" title="最大化" aria-label="最大化">
+          <svg viewBox="0 0 10 10" aria-hidden="true" class="ic-max"><rect x="0.5" y="0.5" width="9" height="9" rx="1"/></svg>
+          <svg viewBox="0 0 10 10" aria-hidden="true" class="ic-rest"><path d="M2.5 3V0.5h7v7H7"/><rect x="0.5" y="2.5" width="7" height="7" rx="1"/></svg>
+        </button>
+        <button class="wbtn close" id="wClose" type="button" title="关闭" aria-label="关闭">
+          <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M0.5 0.5l9 9M9.5 0.5l-9 9"/></svg>
+        </button>
+      </div>
+    </nav>
+  </header>
+
+  <main class="view" id="view">
+    <!-- 首屏占位。app.js 起来后会立刻换成真实页面；
+         如果 app.js 没跑起来（脚本 404 / 被拦），这段就是用户看到的东西，不能是白的 -->
+    <div class="statebox" id="boot">
+      <span class="ic"><svg class="ui-icon icon-spin" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.6" fill="none" stroke-dasharray="28" stroke-dashoffset="10" stroke-linecap="round"/></svg></span>
+      <span class="t">正在启动控制台界面…</span>
+      <span class="d">若长时间停在这里，说明 <b>app.js</b> 没有加载成功。<br>
+        确认静态目录下存在 app.js / app.css，然后刷新页面。</span>
+    </div>
+  </main>
+
+  <footer class="statusbar">
+    <span id="sbGw"><span class="dot idle"></span> 网关 未知</span>
+    <span id="sbCtl">控制台 检查中</span>
+    <span id="sbVer">版本 —</span>
+    <span class="g">
+      <span id="sbRoute">路由 —</span>
+      <span id="sbModel">—</span>
+      <span id="sbTime">—</span>
+    </span>
+  </footer>
+
+</div>
+
+<div id="toasts" aria-live="polite"></div>
+
+<noscript>
+  <div class="statebox">
+    <span class="ic"><svg class="ui-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><circle cx="8" cy="8" r="6.2" stroke="currentColor" stroke-width="1.3" fill="none"/><line x1="8" y1="4.5" x2="8" y2="8.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="11.5" r=".9" fill="currentColor"/></svg></span>
+    <span class="t">浏览器禁用了 JavaScript</span>
+    <span class="d">Prism 的界面由 app.js 渲染，禁用脚本后无法显示任何数据。<br>
+      请在 WebView2 / 浏览器设置里启用 JavaScript 后重新打开。</span>
+  </div>
+</noscript>
+
+<!-- 壳只负责导航、路由和状态灯；五页的实现各自在 pages/ 下，由 app.js 按需加载 -->
+<script src="app.js" defer></script>
+</body>
+</html>
