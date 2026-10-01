@@ -4,6 +4,16 @@
 Prism 桌面端采用轻量原生前端架构（Vanilla JS + 原生 CSS + 原生 HTML），由 `app/static/index.html` 作为主容器，引入 `app/static/app.css`（全局样式体系）与 `app/static/app.js`（核心路由、全局 UI 组件库、窗口控制、事件监听与网络轮询）。五个核心视图（`home.js`, `usage.js`, `monitor.js`, `logs.js`, `settings.js`）放置于 `app/static/pages/`，以挂载函数形式注入到 `window.PrismPages`。
 本项目全面遵循 **ponytail full 模式**，不引入外部重量级打包工具或依赖，优先复用原生 DOM API 与现有函数，保持极简、健壮、闭环。完整规则（含 caveman full 输出规范）沉淀在 [AGENTS.md](AGENTS.md)，以该文件为准。
 
+### 2026-10-01 交付加固新增的可复用机制
+| 机制 | 位置 | 说明 |
+|---|---|---|
+| 控制台令牌闸 | `server.py` 的 `_check_token` / `create_server(token=)` | 桌面版每次启动随机令牌，`/api/*` 必带 `X-Prism-Token`；静态放行；`python server.py` 调试形态不启用。契约见 `app/INTERFACES.md` |
+| 启动体检 | `bridge.verify_startup_files()` | SWITCH_FILES 四件套可解析 + plan 自洽；失败阻塞启动并指向最近 `route-switch` 备份 |
+| 首启引导 | `bridge.ensure_first_run_files()` | 缺 `.local-secrets.json`/`config.yaml` 时生成配对密钥；config 一律读磁盘 secrets；绝不覆盖 |
+| 原子写 | `bridge._atomic_write_json/_atomic_write_text` | replace 前复查存在，并发抢先时放弃返回 False |
+| 保存链渲染探针 | `script/_settings_probe.py` | 真 server 跑在探针进程内 + 服务端断言（CSP 拦跨源回传，见 DEV-RULES B8） |
+| 测试面 | `app/tests/` 8 用例 | HTTP 层 / health 聚合 / 启动路径均已覆盖，`run_all.py` 一条命令 |
+
 ---
 
 ## Feature Inventory
