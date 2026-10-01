@@ -887,6 +887,21 @@ def run(console_port: int = DEFAULT_CONSOLE_PORT, open_window: bool = True) -> i
 
     shell = Shell(console_port)
 
+    # 启动体检（ME-03）：一次「保存路由」改四份文件，进程在途中被强杀会留下互相
+    # 矛盾的半写状态。矛盾状态下拉起网关只会把问题放大（网关读坏 config、页面读
+    # 坏 plan），所以这里 fail-loud：弹窗说明问题并指向最近一次 route-switch 备份。
+    problems = bridge.verify_startup_files()
+    if problems:
+        backup = bridge.latest_switch_backup()
+        message = ('启动体检发现配置文件状态矛盾（上次切换可能被中断）：\n\n'
+                   + '\n'.join('· ' + p for p in problems))
+        if backup is not None:
+            message += ('\n\n最近的自动备份（可人工比对恢复）：\n' + str(backup))
+        else:
+            message += '\n\n没有找到 route-switch 自动备份，需要人工核对这四份文件。'
+        notify_error(message)
+        return 2
+
     state = ensure_gateway()
     log('网关状态：' + state)
     # 网关起不来、或者 8317 上坐的是别人的网关，都要在托盘上说一声。这句先存着，

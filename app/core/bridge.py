@@ -429,6 +429,90 @@ def record_route_selector_fingerprint() -> dict:
         return {'sha256': digest, 'bytes': size, 'path': str(path)}
 
 
+# --------------------------------------------------------------------------- 启动体检
+
+def latest_switch_backup() -> Path | None:
+    """backups\\ 下最近的 route-switch-* 目录（恢复时的第一站）。
+
+    目录名是 route-switch-<时间戳>-<随机段>，时间戳定宽，字典序就是时间序。
+    """
+    backups = ROOT / 'backups'
+    if not backups.is_dir():
+        return None
+    try:
+        dirs = sorted(p for p in backups.iterdir()
+                      if p.is_dir() and p.name.startswith('route-switch-'))
+    except OSError:
+        return None
+    return dirs[-1] if dirs else None
+
+
+def verify_startup_files() -> list[str]:
+    """启动体检（ME-03）：检测「PUT 成功与落盘之间被强杀」留下的半写状态。
+
+    一次「保存路由」会原子地改 SWITCH_FILES 四份文件；进程在途中被杀，它们可能停在
+    互相矛盾的状态。这里在拉网关之前做一次**只读**核对，返回问题清单（空 = 健康）：
+
+    * JSON 三份（plan / catalog / templates）必须能解析 —— 截断是半写的最强信号；
+    * plan 顶层必须是对象、providers 必须是列表、selected 引用的 id 必须存在
+      （矛盾说明四份文件停在了不同的时刻）；
+    * config.yaml 只查非空 —— Prism 不解析 YAML（PyYAML 不在打包依赖里），它真正的
+      读者是网关（Go）；解析错误网关自己起不来，ensure_gateway 会兜住。
+    """
+    problems: list[str] = []
+    plan: dict | None = None
+    for name in SWITCH_FILES:
+        path = ROOT / name
+        if not path.is_file():
+            continue                      # 首次启动缺失不算半写（生成是 Init 的活）
+        if name == 'config.yaml':
+            try:
+                if path.stat().st_size == 0:
+                    problems.append('config.yaml 是空文件（可能半写）')
+            except OSError as exc:
+                problems.append('config.yaml 读不了：%s' % str(exc)[:80])
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding='utf-8'))
+        except (OSError, ValueError) as exc:
+            problems.append('%s 解析失败（JSON 截断？）：%s' % (name, str(exc)[:80]))
+            continue
+        if name == 'routing-plan.json':
+            if isinstance(payload, dict):
+                plan = payload
+            else:
+                problems.append('routing-plan.json 顶层不是 JSON 对象')
+    if plan is not None:
+        problems.extend(_plan_consistency(plan))
+    return problems
+
+
+def _plan_consistency(plan: dict) -> list[str]:
+    """plan 内部自洽：selected（新旧两种形状）引用的 id 必须存在于 providers。"""
+    problems: list[str] = []
+    providers = plan.get('providers')
+    if not isinstance(providers, list):
+        return ['routing-plan.json 的 providers 不是列表']
+    ids = {row.get('id') for row in providers
+           if isinstance(row, dict) and isinstance(row.get('id'), str)}
+    selected = plan.get('selected')
+    if selected is None:
+        return problems
+    if not isinstance(selected, dict):
+        return problems + ['routing-plan.json 的 selected 不是对象']
+    for group, picks in selected.items():
+        if isinstance(picks, str):        # 旧版单字符串形状：/api/select 两种都吃，这里同样
+            picks = [picks]
+        if not isinstance(picks, list):
+            problems.append('routing-plan.json 的 selected.%s 既不是数组也不是字符串' % group)
+            continue
+        for pid in picks:
+            if pid not in ids:
+                problems.append('routing-plan.json 的 selected.%s 引用了不存在的来源 id：%r'
+                                % (group, pid))
+    return problems
+
+
 def _ensure_checked() -> None:
     """进程内首次碰到网关调用时校验一次，免得 server.py 忘了显式调用。"""
     global _INTACT_CHECKED

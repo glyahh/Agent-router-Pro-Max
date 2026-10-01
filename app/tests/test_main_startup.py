@@ -171,7 +171,80 @@ finally:
     bridge.enabled_groups = _orig_groups
 
 print()
-print('== 7. 生产数据污染闸门（E4）==')
+print('== 7. 启动体检（ME-03：bridge.verify_startup_files，全在临时目录）==')
+_vroot = tempfile.mkdtemp(prefix='prism-medit-')
+_orig_root = bridge.ROOT
+try:
+    bridge.ROOT = Path(_vroot)
+    check('全缺失（首次启动）算健康', bridge.verify_startup_files(), [])
+
+    def _write(name, content):
+        p = Path(_vroot, name)
+        p.parent.mkdir(exist_ok=True)
+        p.write_text(content, encoding='utf-8')
+
+    _write('config.yaml', 'codex-api-key: []\n')
+    _write('routing-plan.json', json.dumps(
+        {'providers': [{'id': 'alpha', 'group': 'gpt'}],
+         'selected': {'gpt': ['alpha']}, 'version': 2}))
+    _write('codex-model-catalog.json', '{"models": {}}')
+    _write('codex-model-catalog-templates.json', '{}')
+    check('健康四件套零问题', bridge.verify_startup_files(), [])
+    check_true('找到的备份目录为空（还没人备份过）',
+               bridge.latest_switch_backup() is None)
+
+    _write('routing-plan.json', '{"providers": [{"id": "al')
+    check_true('plan 截断被点名',
+               any('routing-plan.json 解析失败' in p for p in bridge.verify_startup_files()),
+               str(bridge.verify_startup_files()))
+
+    _write('routing-plan.json', json.dumps(
+        {'providers': [{'id': 'alpha', 'group': 'gpt'}],
+         'selected': {'gpt': ['ghost-id']}}))
+    check_true('selected 引用不存在的 id 被点名',
+               any("selected.gpt 引用了不存在的来源 id" in p and 'ghost-id' in p
+                   for p in bridge.verify_startup_files()),
+               str(bridge.verify_startup_files()))
+
+    _write('routing-plan.json', json.dumps(
+        {'providers': [{'id': 'alpha', 'group': 'gpt'}], 'selected': {'gpt': 'alpha'}}))
+    check('旧版单字符串形状照收', bridge.verify_startup_files(), [])
+
+    _write('routing-plan.json', json.dumps(
+        {'providers': [{'id': 'alpha', 'group': 'gpt'}], 'selected': {'gpt': 42}}))
+    check_true('selected 非数组非字符串被点名',
+               any('selected.gpt' in p for p in bridge.verify_startup_files()),
+               str(bridge.verify_startup_files()))
+
+    _write('routing-plan.json', json.dumps({'providers': 'junk', 'selected': {}}))
+    check_true('providers 非列表被点名',
+               any('providers 不是列表' in p for p in bridge.verify_startup_files()),
+               str(bridge.verify_startup_files()))
+
+    _write('routing-plan.json', json.dumps({'providers': [], 'selected': {}}))
+    _write('config.yaml', '')
+    check_true('空 config.yaml 被点名',
+               any('config.yaml 是空文件' in p for p in bridge.verify_startup_files()),
+               str(bridge.verify_startup_files()))
+
+    _write('config.yaml', 'ok: yes\n')
+    _write('codex-model-catalog.json', '{oops}')
+    check_true('catalog 截断被点名',
+               any('codex-model-catalog.json 解析失败' in p
+                   for p in bridge.verify_startup_files()),
+               str(bridge.verify_startup_files()))
+
+    Path(_vroot, 'backups', 'route-switch-20260901-000000-111111').mkdir(parents=True)
+    Path(_vroot, 'backups', 'route-switch-20261001-000000-222222').mkdir(parents=True)
+    latest = bridge.latest_switch_backup()
+    check_true('备份按名字取最新（时间戳定宽，字典序=时间序）',
+               latest is not None and '20261001' in latest.name, str(latest))
+finally:
+    bridge.ROOT = _orig_root
+    shutil.rmtree(_vroot, ignore_errors=True)
+
+print()
+print('== 8. 生产数据污染闸门（E4）==')
 _db_after = (_DB_PATH.stat().st_mtime_ns, _DB_PATH.stat().st_size) if _DB_PATH.exists() else None
 check('usage-history.db 跑完前后零变化', _db_after, _DB_BEFORE)
 backups_dir = ROOT / 'backups'
