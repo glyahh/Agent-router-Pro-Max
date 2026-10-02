@@ -92,7 +92,9 @@ threading.Thread(target=srv.serve_forever, daemon=True).start()
 try:
     for label, opener, path in (
             ('bridge.MGMT_OPENER（管理密钥）', bridge.MGMT_OPENER, '/v0/management/config'),
-            ('sampling._MGMT_OPENER（管理密钥）', sampling._MGMT_OPENER, '/v0/management/auth-files')):
+            ('sampling._MGMT_OPENER（管理密钥）', sampling._MGMT_OPENER, '/v0/management/auth-files'),
+            ('rs.LOCAL_OPENER（上游 sk- / OAuth）', rs.LOCAL_OPENER, '/models'),
+            ('rs.get_opener()（上游 sk- / OAuth）', rs.get_opener({}), '/models')):
         code, followed = probe_opener(opener, port, path)
         check_true('%s 停在 302' % label, code == 302, 'got HTTP %r' % code)
         check_true('%s 未跟随' % label, not followed)

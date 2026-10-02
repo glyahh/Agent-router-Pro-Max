@@ -22,6 +22,7 @@ import os
 import re
 import shutil
 import time
+import logging
 from datetime import datetime
 from pathlib import Path
 
@@ -29,6 +30,8 @@ from . import bridge
 
 rs = bridge.rs
 RouteError = bridge.RouteError
+
+_log = logging.getLogger('prism.sources')
 
 # 自定义来源只写 codex-api-key 段。openai-compatibility 段要 api-key-entries 数组，
 # 形状不同，等真有需求再开。
@@ -117,8 +120,8 @@ def plan_head_conflicts(providers, enabled_ids=None):
         if not h:
             continue
         if not HEAD_RE.match(h):
-            problems.append('来源 %s 的渠道头「%s」不合法：只能用 %d 个字符以内的小写字母、'
-                            '数字、点、下划线、连字符，且不能以点或连字符开头。'
+            problems.append('来源 %s 的渠道头「%s」不合法：只能用 %d 个字符以内的字母或数字开头，'
+                            '后接小写字母、数字、点、下划线、连字符。'
                             % (p.get('id'), h, HEAD_MAX))
             continue
         if h in heads:
@@ -289,7 +292,7 @@ def _write_plan(plan):
 # backups\ 里混着用户手工做的快照（manual-hubbig-* 这种）。自动备份的名字一律是
 # <label>-YYYYmmdd-HHMMSS-ffffff，只有这个形状的才认领——名字对不上一律不碰，
 # 删错一个就是删掉用户手里的回滚点。
-AUTO_BACKUP_LABELS = ('route-switch', 'catalog-regen', 'client-connect',
+AUTO_BACKUP_LABELS = ('route-switch', 'route-switch-config', 'catalog-regen', 'client-connect',
                       'source-add', 'source-edit', 'source-delete')
 _AUTO_BACKUP_NAME = re.compile(
     r'^(?:' + '|'.join(re.escape(x) for x in AUTO_BACKUP_LABELS) + r')-\d{8}-\d{6}-\d{6}$')
@@ -444,7 +447,10 @@ def _enabled_ids(config, plan):
                 continue
             if rs.active(rs.find_entry(config, p), p.get('section')):
                 out.add(p['id'])
-        except Exception:                              # noqa: BLE001
+        except Exception as exc:                       # noqa: BLE001
+            # 按"这个来源没生效"处理，但不许静默：坏行参与的冲突被漏判时至少有迹可循。
+            _log.warning('_enabled_ids 跳过来源 %s（%s: %s）',
+                         p.get('id'), type(exc).__name__, exc)
             continue
     return out
 

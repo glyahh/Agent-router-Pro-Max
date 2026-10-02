@@ -466,10 +466,12 @@ def _hermes_provider_span(lines: list[str]):
 
 
 def _hermes_block(models) -> list[str]:
+    # api / api_key 走 json.dumps（YAML 双引号标量）：与下面 model 行同款，值里的
+    # YAML 特殊字符（#、: 、引号）不再依赖"当前字符集恰好安全"。
     out = ['  %s:' % HERMES_PROVIDER_ID,
-           '    api: %s' % openai_base(),
+           '    api: %s' % json.dumps(openai_base(), ensure_ascii=False),
            '    name: %s' % PRISM_DISPLAY,
-           '    api_key: %s' % _local_key()]
+           '    api_key: %s' % json.dumps(_local_key(), ensure_ascii=False)]
     if models:
         out.append('    models:')
         for cid in models:

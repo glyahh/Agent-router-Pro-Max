@@ -185,7 +185,7 @@ try:
                        {'name': 'brand-new-model', 'alias': 'brand-new-model', 'context_length': 128000}],
          'models': [{'name': 'A/legacy-thing', 'alias': 'A/legacy-thing'}]},
     ]}
-    rs.regen_catalog(rplan, {'gpt': ['oai', 'srapi'], 'deepseek': [], 'glm': []})
+    rs.regen_catalog(rplan)
     cat = json.loads((tmp / 'codex-model-catalog.json').read_text(encoding='utf-8'))
     by_slug = {m['slug']: m for m in cat['models']}
     print('  产出 slug: %r' % (sorted(by_slug),))
@@ -216,7 +216,7 @@ try:
 
     # 幂等：再跑一次，池子不该再长
     n_before = len(tpl_slugs)
-    rs.regen_catalog(rplan, {'gpt': ['oai', 'srapi'], 'deepseek': [], 'glm': []})
+    rs.regen_catalog(rplan)
     tpl2 = json.loads((tmp / 'codex-model-catalog-templates.json').read_text(encoding='utf-8'))
     check('第二次 regen 池子不增长', len(tpl2['models']), n_before)
     cat2 = json.loads((tmp / 'codex-model-catalog.json').read_text(encoding='utf-8'))

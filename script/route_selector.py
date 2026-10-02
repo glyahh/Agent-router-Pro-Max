@@ -7,7 +7,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 PORT = 8318
-LOCAL_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    # 带凭据的出站（上游 sk- / 官方 OAuth）绝不跟随 3xx：CPython 的 redirect_request
+    # 会把 Authorization 原样复制到新主机且不校验主机变化（DEV-RULES D7）。
+    def redirect_request(self,*args,**kwargs):return None
+
+LOCAL_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
 LOCK = threading.Lock()
 SECTIONS = ('codex-api-key', 'openai-compatibility')
 AUTH_FILE = 'codex-official.json'
@@ -16,7 +21,8 @@ class RouteError(Exception): pass
 
 def read_json(path): return json.loads(path.read_text(encoding='utf-8-sig'))
 def write_json(path, data):
-    temp = path.with_suffix(path.suffix + '.tmp')
+    # 临时名带 pid + 线程号：出现第三个写手时不会互抢同一个半成品（与 bridge._write_lock 同款）。
+    temp = path.with_suffix(path.suffix + '.%d.%d.tmp' % (os.getpid(), threading.get_ident()))
     temp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
     os.replace(temp, path)
 
@@ -32,8 +38,8 @@ def get_opener(entry=None):
     p = entry.get('proxy-url') if entry else None
     proxy = p if (p is not None and p != '') else get_proxy_url()
     if proxy:
-        return urllib.request.build_opener(urllib.request.ProxyHandler({'http': proxy, 'https': proxy}))
-    return urllib.request.build_opener()
+        return urllib.request.build_opener(urllib.request.ProxyHandler({'http': proxy, 'https': proxy}), _NoRedirect())
+    return urllib.request.build_opener(_NoRedirect())
 
 def secrets(): return read_json(ROOT / '.local-secrets.json')
 def api(path, method='GET', data=None):
@@ -184,12 +190,6 @@ def select_candidates(provider, rows):
         if prev is None or score>prev[0]:
             merged[name]=(score,{'name':upstream,'alias':name,'context_length':item.get('context_length')})
     return [merged[k][1] for k in sorted(merged)]
-
-def upstream_models(provider, entry, opener=None):
-    """Live /models fetch already filtered for one row. Failure yields an error, never a stale list."""
-    rows,error=fetch_upstream(provider,entry,opener)
-    if error:return [],error
-    return select_candidates(provider,rows),None
 
 def legacy_models(provider):
     """Hidden aliases kept for tasks started before this UI existed; never offered as checkboxes."""
@@ -489,9 +489,9 @@ def apply_selection(data):
             if auth_before[pid]!=desired:auth_changes[pid]=desired
         if not changed and not auth_changes:
             if plan!=old_plan:
-                write_json(ROOT/'routing-plan.json',clean_plan(plan));regen_catalog(plan,data['selected'])
+                write_json(ROOT/'routing-plan.json',clean_plan(plan));regen_catalog(plan)
             return snapshot()
-        b=backup('route-switch');attempted=[]
+        b=backup('route-switch-config');attempted=[]
         try:
             # One concurrency check before any write: a PUT triggers a full config reload that
             # normalizes the other section, so re-checking mid-loop false-alarms.
@@ -529,7 +529,7 @@ def apply_selection(data):
                 except Exception:restored=False
             if not restored:raise RouteError('回滚失败；请暂停网关并从备份恢复：'+str(b)) from None
             raise
-        regen_catalog(plan,data['selected'])
+        regen_catalog(plan)
         write_json(ROOT/'routing-plan.json',clean_plan(plan))
         write_json(b/'switch.json',{'selected':data['selected'],'picks':{k:list(v) for k,v in picks.items()},'time':datetime.now().isoformat(),'scope':'next request; existing streams are not interrupted'})
         return snapshot()
@@ -616,7 +616,7 @@ def auth_current():
 def patch_auth_models(excluded):
     api('/v0/management/auth-files/fields','PATCH',{'name':AUTH_FILE,'excluded_models':excluded})
 
-def regen_catalog(plan,selected):
+def regen_catalog(plan):
     # picked 的键是**客户端可见 ID**（srapi/gpt-5.6-sol），值里额外带上干净别名 clean——
     # 因为官方 meta 与模板池都是按**上游模型名**索引的，拿带头的 ID 去查会全部落空，
     # 表现是"有头的模型丢掉官方元数据、档位和上下文窗口"，不报错，很难发现。
@@ -727,9 +727,7 @@ def regen_catalog(plan,selected):
 def recheck_blocked():
     with LOCK:
         plan=read_json(ROOT/'routing-plan.json');config=api('/v0/management/config')
-        class NoRedirect(urllib.request.HTTPRedirectHandler):
-            def redirect_request(self,*args,**kwargs):return None
-        opener=urllib.request.build_opener(NoRedirect())
+        opener=urllib.request.build_opener(_NoRedirect())
         for p in plan['providers']:
             if not p.get('blocked'):continue
             if p['section']=='auth-file':p['blocked']=None;continue
@@ -754,14 +752,14 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Cache-Control','no-store');self.send_header('X-Content-Type-Options','nosniff')
         self.send_header('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'")
         self.end_headers();self.wfile.write(raw)
-    def check(self,auth=False):
+    def check(self):
         if self.headers.get('Host')!=f'127.0.0.1:{PORT}':raise RouteError('仅允许本机地址访问')
         origin=self.headers.get('Origin')
         if origin and origin!=f'http://127.0.0.1:{PORT}':raise RouteError('拒绝跨站请求')
         return True
     def do_GET(self):
         try:
-            if not self.check(self.path.startswith('/api/')):return
+            self.check()
             static={'/':('selector.html','text/html; charset=utf-8'),'/selector.js':('selector.js','text/javascript; charset=utf-8'),'/selector.css':('selector.css','text/css; charset=utf-8')}
             if self.path in static:
                 name,mime=static[self.path];return self.send(200,(ROOT/'static'/name).read_bytes(),mime)
@@ -771,7 +769,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:self.send(500,{'error':'本地配置读取失败；未返回敏感详情'})
     def do_POST(self):
         try:
-            if not self.check(True):return
+            self.check()
             if self.path not in ('/api/select','/api/connect','/api/recheck'):return self.send(404,{'error':'Not found'})
             length=int(self.headers.get('Content-Length','0'))
             if not 0<length<4096:raise RouteError('请求大小无效')

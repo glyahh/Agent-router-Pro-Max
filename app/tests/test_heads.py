@@ -71,6 +71,10 @@ dup = [{'id': 'a', 'group': 'gpt', 'head': 'same', 'expose': ['m1']},
 check_true('重复 head 被拦', any_msg(S.plan_head_conflicts(dup), '必须唯一'))
 bad = [{'id': 'a', 'group': 'gpt', 'head': 'Bad Head', 'expose': []}]
 check_true('非法 head 被拦', any_msg(S.plan_head_conflicts(bad), '不合法'))
+# LO-05：HEAD_RE 首字符只许字母/数字，报错文案必须把这一点也说清（原来只说点和连字符）。
+lead_bad = [{'id': 'a', 'group': 'gpt', 'head': '_lead', 'expose': []}]
+check_true('_ 开头的报错文案点明首字符要求',
+           any_msg(S.plan_head_conflicts(lead_bad), '字母或数字开头'))
 
 print('== 动态检查（按"已启用"判）==')
 two_bare = [{'id': 'oai', 'group': 'gpt', 'head': '', 'expose': ['gpt-5.6-sol']},

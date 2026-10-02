@@ -136,6 +136,10 @@ try:
     # no secrets"，所以复制一份进沙箱是安全的（不像 settings.json / hermes 那样带密钥）。
     shutil.copy2(ROOT / 'routing-plan.json', TMP / 'routing-plan.json')
     bridge.ROOT = TMP
+    # 签发密钥桩死：rs.secrets() 读的是 rs.ROOT（重定向 bridge.ROOT 盖不住它），
+    # 不桩的话每跑一次测试就读一遍真实 .local-secrets.json（审查 HI-02）。
+    REAL_KEY = agents._local_key
+    agents._local_key = lambda: 'prism-test-local-key'
 
     print()
     print('== Claude Code：只改两个 env 键，其余逐字节不动 ==')
@@ -260,7 +264,8 @@ agent: {}
     check_true('plugins / _config_version / agent 都还在',
                all(k in text for k in ('plugins:', '_config_version: 44', 'agent: {}')))
     check_true('新增了 providers.prism', '\n  prism:\n' in text)
-    check_true('prism 指向网关', ('    api: %s' % agents.openai_base()) in text)
+    check_true('prism 指向网关（api 行是 JSON 引号形式，ME-11）',
+               ('    api: %s' % json.dumps(agents.openai_base(), ensure_ascii=False)) in text)
 
     # 用模块自己的解析器复查一遍（没有 yaml 库，就用同一套行解析）
     (top, end), (ps, pe) = agents._hermes_provider_span(lines)
@@ -271,7 +276,9 @@ agent: {}
         if m:
             found = m.group(1)
             break
-    check('重新解析读到的 api', found, agents.openai_base())
+    check('重新解析读到的 api', found, json.dumps(agents.openai_base(), ensure_ascii=False))
+    check_true('api_key 行也是 JSON 引号形式（ME-11）',
+               ('    api_key: %s' % json.dumps('prism-test-local-key', ensure_ascii=False)) in text)
     check_true('prism 块在 providers 段内', top is not None and top < ps < end)
     check_true('prism 块后面还有原内容', pe <= len(lines))
 
@@ -305,6 +312,7 @@ agent: {}
 finally:
     for name, fn in REAL.items():
         setattr(agents, name, fn)
+    agents._local_key = REAL_KEY
     bridge.ROOT = REAL_ROOT
     shutil.rmtree(TMP, ignore_errors=True)
     print('  沙箱已删除: %s' % TMP)

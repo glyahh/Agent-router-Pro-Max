@@ -36,6 +36,7 @@ if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 from core import identity  # noqa: E402  网关身份核对（只依赖标准库，见 identity.py）
 from core import sampling  # noqa: E402  复用它的网关 GET、来源映射与 rs 引入
+from core import sources  # noqa: E402  客户端可见 ID 的唯一实现（client_id），health 只消费不复算
 
 rs = sampling.rs
 ROOT = sampling.ROOT
@@ -488,7 +489,8 @@ def _routing(plan: dict, config: dict | None) -> dict:
         for alias in provider.get("expose", []) or []:
             # 图片模型与过期别名进不了当前 Codex 的 /v1/responses，别列进来当"已暴露"。
             if isinstance(alias, str) and rs.codex_usable(alias):
-                cid = alias if (not head or alias.startswith("A/")) else head + rs.HEAD_SEP + alias
+                # A/ 遗留别名永不加头；其余的 head+SEP 组合只信 sources.client_id 这一份实现。
+                cid = alias if alias.startswith("A/") else sources.client_id(head, alias)
                 if cid not in exposed:
                     exposed.append(cid)
     return {
