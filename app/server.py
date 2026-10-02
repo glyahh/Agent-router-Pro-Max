@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import errno
+import hmac
 import json
 import logging
 import logging.handlers
@@ -149,6 +150,29 @@ RUN_KEY = r'Software\Microsoft\Windows\CurrentVersion\Run'
 AUTOSTART_NAME = 'Prism'     # 注册表里的值名，与 main.py 约定
 
 STATIC_ALIAS = {'/': 'index.html'}
+_STATIC_CACHE: dict[str, tuple[float, bytes, str]] = {}
+
+
+def _preload_static_cache() -> None:
+    """启动时将静态资源预载至内存，WebView2 请求 0ms 纯内存极速直供。"""
+    try:
+        base = STATIC_DIR.resolve()
+        if not base.is_dir():
+            return
+        for root, _, files in os.walk(base):
+            for fname in files:
+                fpath = Path(root) / fname
+                try:
+                    rel = fpath.relative_to(base).as_posix()
+                    mtime = os.path.getmtime(fpath)
+                    raw = fpath.read_bytes()
+                    ctype = MIME.get(fpath.suffix.lower(), 'application/octet-stream')
+                    _STATIC_CACHE[rel] = (mtime, raw, ctype)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
 
 
 # --------------------------------------------------------------------------- 异常
@@ -250,21 +274,33 @@ def _prune_backups() -> None:
         log.info('清理旧备份 %d 个：%s', len(removed), '、'.join(removed))
 
 
+def _background_bootstrap() -> None:
+    try:
+        _preload_static_cache()
+    except Exception:
+        pass
+    try:
+        _prune_backups()
+    except Exception:
+        pass
+
+
 def start_background(port: int = DEFAULT_PORT, token: str | None = None) -> ExclusiveServer:
     """后台线程里跑服务，立刻返回。main.py 用这个（token=本次启动的控制台令牌）。"""
     _ensure_logging()
-    _prune_backups()
     httpd = create_server(port, token)
     thread = threading.Thread(target=httpd.serve_forever, kwargs={'poll_interval': 0.3},
                               name='prism-console', daemon=True)
     thread.start()
     httpd.console_thread = thread
+    threading.Thread(target=_background_bootstrap, name='prism-maint', daemon=True).start()
     _start_sampling()
     return httpd
 
 
 def serve_forever(port: int = DEFAULT_PORT) -> None:
     _ensure_logging()
+    _preload_static_cache()
     _prune_backups()
     httpd = create_server(port)
     _start_sampling()
@@ -864,7 +900,8 @@ class Handler(BaseHTTPRequestHandler):
         if not token or not path.startswith('/api/'):
             return
         got = (self.headers.get('X-Prism-Token') or '').strip()
-        if got != token:
+        # encode 后比较：compare_digest 对 str 只接受 ASCII，header 里混进非 ASCII 会抛 TypeError
+        if not hmac.compare_digest(got.encode('utf-8'), str(token).encode('utf-8')):
             raise HttpError(401, '控制台令牌校验未过。请从 Prism 窗口使用；'
                                  '浏览器调试请改用独立模式（python server.py --port …）。')
 
@@ -1115,6 +1152,17 @@ class Handler(BaseHTTPRequestHandler):
             rel = rel[len('static/'):]          # 前端若写成绝对 /static/xxx 也能命中
         if not rel:
             rel = 'index.html'
+
+        # 内存直出加速：已预热或已缓存的文件直接从内存响应，0ms 磁盘 IO
+        cached = _STATIC_CACHE.get(rel)
+        if cached:
+            _, raw, ctype = cached
+            if rel == 'index.html':
+                raw = raw.replace(THEME_PLACEHOLDER,
+                                  b'data-theme="' + effective_theme().encode('ascii') + b'"')
+            self._send(200, raw, ctype, {'Cache-Control': 'no-cache'})
+            return
+
         candidate = (STATIC_DIR / rel)
         try:
             target = candidate.resolve(strict=True)
@@ -1125,13 +1173,19 @@ class Handler(BaseHTTPRequestHandler):
         if not target.is_file() or not target.is_relative_to(STATIC_DIR.resolve()):
             raise HttpError(404, '静态文件不存在：' + path)
         ctype = MIME.get(target.suffix.lower(), 'application/octet-stream')
+        target_key = str(target)
+        try:
+            mtime = os.path.getmtime(target_key)
+        except OSError:
+            mtime = 0.0
         raw = target.read_bytes()
+        _STATIC_CACHE[rel] = (mtime, raw, ctype)
+        _STATIC_CACHE[target_key] = (mtime, raw, ctype)
+
         if target.name == 'index.html':
-            # 首屏就把主题定下来，避免"先白后黑"闪一下。定长模式替换，找不到占位就
-            # 原样端出去（老 index.html 也不会因此 500）。
             raw = raw.replace(THEME_PLACEHOLDER,
                               b'data-theme="' + effective_theme().encode('ascii') + b'"')
-        self._send(200, raw, ctype)
+        self._send(200, raw, ctype, {'Cache-Control': 'no-cache'})
 
 
 # --------------------------------------------------------------------------- 入口

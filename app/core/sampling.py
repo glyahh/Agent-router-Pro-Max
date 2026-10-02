@@ -414,6 +414,8 @@ def _connect(path: Path | None = None):
     conn = sqlite3.connect(path or _db_path(), timeout=10)
     conn.row_factory = sqlite3.Row
     try:
+        # WAL 读写不互斥，控制台轮询读不再被采样写卡出 database is locked；busy 等待由 connect(timeout=10) 覆盖
+        conn.execute("PRAGMA journal_mode=WAL")
         with conn:
             yield conn
     finally:

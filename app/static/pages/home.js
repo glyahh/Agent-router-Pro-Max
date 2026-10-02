@@ -46,7 +46,7 @@
     '.home{color:var(--fg);font-family:var(--sans);padding:0 0 10px}',
     '.home *{box-sizing:border-box}',
     '.home .sechead{flex-wrap:wrap}',
-    '.home .hr{min-width:14px;flex:1;height:1px;background:var(--line)}',
+    '.home .hr{display:none}',
     // 输入控件基线。**必须排除 checkbox**（DEV-RULES A2，踩过一次）
     '.home select,.home input:not([type="checkbox"]),.home textarea{font-family:inherit;',
     '  font-size:13.5px;color:var(--fg);background:var(--panel);border:1px solid var(--line2);',
@@ -97,7 +97,7 @@
     '.home .pv .f{color:var(--fg3)}',
     '.home .pv .t{color:var(--fg)}',
     // 全局模型搜索与一键控制工具条
-    '.home .home-global-toolbar{display:flex;align-items:center;gap:12px;margin:0 0 14px 0;padding:10px 14px;background:var(--panel2);border:1px solid var(--line);border-radius:var(--r-card);box-shadow:var(--shadow);flex-wrap:wrap}',
+    '.home .home-global-toolbar{display:flex;align-items:center;gap:12px;margin:0 0 16px 0;padding:8px 12px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);box-shadow:var(--shadow);flex-wrap:wrap}',
     '.home .home-search-box{display:flex;align-items:center;gap:8px;flex:1;min-width:240px;position:relative}',
     '.home .search-ic{color:var(--fg3);display:inline-flex;align-items:center;flex-shrink:0}',
     '.home .search-ic .ui-icon{width:15px;height:15px}',
@@ -296,19 +296,16 @@
     }
     if (isFormDirty()) dirtyCount++;
 
-    var badgeText = dirty ? ('待保存：' + dirtyCount + ' 处改动') : '配置已同步';
-    var noteText = '已启用 ' + on + ' 来源 · ' + clientIds().length + ' 模型';
-    var saveText = S.busy ? '' : (dirty ? ('保存待修改项 (' + dirtyCount + ')') : '保存路由');
+    var badgeText = '待保存';
+    var saveText = S.busy ? '' : '保存';
 
     var badge = $stickyBar.querySelector('[data-role="sb-badge"]');
-    var note = $stickyBar.querySelector('[data-role="sb-note"]');
     var saveBtn = $stickyBar.querySelector('[data-role="sb-save"]');
     var refreshBtn = $stickyBar.querySelector('[data-role="sb-refresh"]');
 
     if (!badge) {
       clear($stickyBar);
-      badge = h('span', { class: dirty ? 'tag warn' : 'tag', text: badgeText, data: { role: 'sb-badge' } });
-      note = h('span', { class: 'sb-note', text: noteText, data: { role: 'sb-note' } });
+      badge = h('span', { class: 'tag warn', text: badgeText, data: { role: 'sb-badge' } });
       saveBtn = h('button', {
         class: 'btn pri sm', type: 'button',
         disabled: !dirty || !!S.busy || !S.state,
@@ -321,13 +318,12 @@
         onclick: function () { reload(true); }
       }, '刷新');
 
-      $stickyBar.appendChild(h('div', { class: 'sb-left' }, [badge, note]));
+      $stickyBar.appendChild(h('div', { class: 'sb-left' }, [badge]));
       $stickyBar.appendChild(h('div', { class: 'sb-spacer' }));
       $stickyBar.appendChild(h('div', { class: 'sb-right' }, [refreshBtn, saveBtn]));
     } else {
-      badge.className = dirty ? 'tag warn' : 'tag';
+      badge.className = 'tag warn';
       badge.textContent = badgeText;
-      note.textContent = noteText;
       saveBtn.disabled = !dirty || !!S.busy || !S.state;
       refreshBtn.disabled = !!S.busy;
       clear(saveBtn);
@@ -574,7 +570,7 @@
 
     if ($filterBadge) {
       $filterBadge.style.display = '';
-      $filterBadge.textContent = '匹配 ' + totalMatches + ' 个模型 · ' + matchedProvs + ' 个来源';
+      $filterBadge.textContent = totalMatches ? (totalMatches + ' 个匹配') : '无匹配';
     }
   }
 
@@ -582,7 +578,7 @@
     $globalFilterInp = h('input', {
       type: 'text',
       class: 'home-global-filter',
-      placeholder: '搜索模型名称或 ID...'
+      placeholder: '搜索模型...'
     });
     if (S.globalFilter) $globalFilterInp.value = S.globalFilter;
 
@@ -629,22 +625,22 @@
     var expandAllBtn = h('button', {
       class: 'btn sm home-tool-btn',
       type: 'button',
-      title: '全部展开',
+      title: '展开全部节点',
       onclick: function (e) {
         e.preventDefault();
         expandAllNodes();
       }
-    }, '全部展开');
+    }, '展开');
 
     var collapseAllBtn = h('button', {
       class: 'btn sm home-tool-btn',
       type: 'button',
-      title: '全部折叠',
+      title: '折叠全部节点',
       onclick: function (e) {
         e.preventDefault();
         collapseAllNodes();
       }
-    }, '全部折叠');
+    }, '折叠');
 
     var searchIconNode = (window.PrismUI && typeof window.PrismUI.icon === 'function')
       ? window.PrismUI.icon('search')
@@ -768,12 +764,10 @@
   }
 
   function agentNode(a, expanded) {
-    var dot = a.connected ? 'ok' : (a.exists ? 'warn' : '');
     var tag = a.connected ? h('span', { class: 'gtag ok', text: '已接入' })
       : (a.exists ? h('span', { class: 'gtag', text: '未接入' })
                   : h('span', { class: 'gtag warn', text: '未安装' }));
     var inner = [
-      h('span', { class: 'gdot ' + dot }),
       h('span', { class: 'glabel', text: a.label }),
       tag,
       a.implemented ? null : h('span', { class: 'gtag warn', text: '只读' }),
@@ -815,22 +809,18 @@
   function updateGroupStatus(gid) {
     if (!$tree) return;
     var gTags = $tree.querySelectorAll('[data-role="g-status"][data-gid="' + gid + '"]');
-    var provs = groupProvs(gid);
     var on = enabledCount(gid);
     for (var i = 0; i < gTags.length; i++) {
-      gTags[i].className = 'gtag' + (on ? ' acc' : '');
-      gTags[i].textContent = on + ' / ' + provs.length + ' 启用';
+      gTags[i].className = 'gtag' + (on ? ' ok' : '');
+      gTags[i].textContent = on ? (on + ' 启用') : '';
+      gTags[i].style.display = on ? '' : 'none';
     }
   }
 
   function updateTreeHint() {
     if (!$treeHint) return;
-    if (!S.state) { $treeHint.textContent = S.loadErr ? '读取失败' : '读取中…'; return; }
-    var on = 0, i;
-    for (i = 0; i < GROUPS.length; i++) on += enabledCount(GROUPS[i].id);
-    $treeHint.textContent = providerRows().length + ' 来源 · 已启用 ' + on +
-      ' · ' + clientIds().length + ' 个模型在客户端目录里' +
-      (isDirty() ? ' · 有未保存改动' : '');
+    if (!S.state) { $treeHint.textContent = S.loadErr ? '读取失败' : ''; return; }
+    $treeHint.textContent = '';
   }
 
   function groupNodes(a) {
@@ -838,27 +828,24 @@
       var provs = groupProvs(g.id);
       var on = enabledCount(g.id);
       var gStatusTag = h('span', {
-        class: 'gtag' + (on ? ' acc' : ''),
-        text: on + ' / ' + provs.length + ' 启用',
+        class: 'gtag' + (on ? ' ok' : ''),
+        text: on ? (on + ' 启用') : '',
+        style: on ? null : { display: 'none' },
         data: { role: 'g-status', gid: g.id }
       });
       var inner = [
-        h('span', { class: 'gdot' }),
         h('span', { class: 'glabel', text: g.name }),
         gStatusTag,
         h('span', { class: 'gspacer' }),
-        h('span', { class: 'gmeta', text: provs.length ? '' : '该分组暂无来源' })
+        h('span', { class: 'gmeta', text: provs.length ? '' : '无来源' })
       ];
       var kids = provs.map(function (p) { return sourceNode(a, g, p); });
       if (!kids.length) {
-        kids = [h('div', { class: 'gnote', text: '该分组暂无来源' })];
+        kids = [h('div', { class: 'gnote', text: '无来源' })];
       } else if (on > 1) {
         var heads = provs.filter(function (p) { return isOn(p.id) && !(p.head || '').trim(); });
         if (heads.length > 1) {
-          kids = kids.concat([h('div', { class: 'gnote bad' },
-            '这个分组同时启用了 ' + heads.length + ' 个没有渠道头的来源（' +
-            heads.map(function (p) { return p.label || p.id; }).join('、') +
-            '）。它们会暴露同名的模型 ID，保存会被拒绝——请给其中一个设置渠道头。')]);
+          kids = kids.concat([h('div', { class: 'gnote bad', text: '存在重复无渠道头来源，请设置渠道头' })]);
         }
       }
       return node('lv2', 'g:' + a.id + '/' + g.id, true, inner, kids);
@@ -871,12 +858,13 @@
     var usable = modelList(p);
     var exposed = (S.draft[p.id] || []).filter(function (x) { return usable.indexOf(x) >= 0; });
     var statusTag = h('span', {
-      class: 'gtag' + (on ? ' ok' : ''),
-      text: on ? '启用' : '停用'
+      class: 'gtag ok',
+      text: '已启用',
+      style: on ? null : { display: 'none' }
     });
     var exposedTag = h('span', {
       class: 'gtag acc',
-      text: exposed.length + ' 暴露'
+      text: String(exposed.length)
     });
     if (!exposed.length) exposedTag.style.display = 'none';
 
@@ -888,31 +876,25 @@
       if (!cb.checked && at >= 0) arr.splice(at, 1);
       S.sel[g.id] = arr;
       var isNowOn = cb.checked;
-      statusTag.className = 'gtag' + (isNowOn ? ' ok' : '');
-      statusTag.textContent = isNowOn ? '启用' : '停用';
+      statusTag.style.display = isNowOn ? '' : 'none';
       updateGroupStatus(g.id);
       updateTreeHint();
       renderActions();
     });
 
     var headEl = h('span', {
-      // 无头 = 该分组的主来源，它保留干净的模型 ID。给它明确的「无头·主」标记
+      // 无头 = 该分组的主来源，它保留干净的模型 ID。给它明确的「主」标记
       class: 'ghead' + (head ? '' : ' none main'),
       title: head
         ? ('渠道头: ' + head + '（客户端 ID: ' + head + '/' + (usable[0] || '模型') + '）')
         : '主来源（保留原始模型 ID）',
-      text: head || '无头·主'
+      text: head || '主'
     });
     headEl.addEventListener('click', function (e) { e.stopPropagation(); editHead(a, p); });
 
     var note = null;
-    if (p.blocked) note = h('div', { class: 'gnote bad', text: '该来源已被标记阻断：' + p.blocked });
-    else if (p.fetch_error) {
-      note = h('div', { class: 'gnote warn' },
-        '上游模型拉取失败: ' + p.fetch_error);
-    } else if (p.warning) {
-      note = h('div', { class: 'gnote' }, '备注：' + String(p.warning).slice(0, 140));
-    }
+    if (p.blocked) note = h('div', { class: 'gnote bad', text: '来源已阻断：' + p.blocked });
+    else if (p.fetch_error) note = h('div', { class: 'gnote warn', text: '模型拉取失败' });
 
     var testEl = testNote(p.id);
     var kids = [];
@@ -928,12 +910,8 @@
       usable.forEach(function (alias) {
         var mEl = modelNode(a, g, p, alias, head, function () {
           var curExp = (S.draft[p.id] || []).filter(function (x) { return usable.indexOf(x) >= 0; });
-          exposedTag.textContent = curExp.length + ' 暴露';
+          exposedTag.textContent = String(curExp.length);
           exposedTag.style.display = curExp.length ? '' : 'none';
-          if (summaryNote) {
-            summaryNote.textContent = '已选 ' + curExp.length + ' / ' + usable.length + ' 个模型' +
-              (head ? '（渠道头: ' + head + '）' : '');
-          }
           updateTreeHint();
           renderActions();
         });
@@ -950,22 +928,16 @@
       });
       modelWrap.appendChild(frag);
     }
-    var summaryNote = null;
     if (!usable.length) {
-      kids.push(h('div', { class: 'gnote', text: '暂无可勾选模型' }));
+      kids.push(h('div', { class: 'gnote', text: '无模型' }));
     } else {
-      summaryNote = h('div', { class: 'gnote' },
-        '已选 ' + exposed.length + ' / ' + usable.length + ' 个模型' +
-        (head ? '（渠道头: ' + head + '）' : ''));
-      kids.push(summaryNote);
-
       var filterInp = h('input', {
         class: 'model-search-inp',
         type: 'text',
-        placeholder: '过滤模型 (' + usable.length + ')...'
+        placeholder: '搜索模型...'
       });
       var filterBar = h('div', { class: 'model-filter-bar' }, filterInp);
-      kids.push(filterBar);
+      if (usable.length > 12) kids.push(filterBar);
 
       var gq = String(S.globalFilter || '').trim().toLowerCase();
       var modelWrap = h('div', { class: 'model-list-wrap' });
@@ -1001,7 +973,6 @@
 
     var inner = [
       cb,
-      h('span', { class: 'gdot' }),
       h('span', { class: 'glabel', text: p.label || p.id }),
       headEl,
       statusTag,
@@ -1327,9 +1298,7 @@
       .then(function (data) {
         applyState(data);
         S.busy = false;
-        var n = 0;
-        for (i = 0; i < GROUPS.length; i++) n += (selected[GROUPS[i].id] || []).length;
-        S.msg = { kind: 'ok', text: '路由已保存（' + n + ' 个来源启用）' };
+        S.msg = { kind: 'ok', text: '路由已保存' };
         return api('/api/sources').catch(function () { return null; });
       })
       .then(function (s) { if (Array.isArray(s)) S.sources = s; renderAll(); })
@@ -1365,18 +1334,9 @@
     return Promise.all([
       api('/api/state', { timeout: 30000 }),
       api('/api/sources').catch(function () { return null; }),
-      api('/api/agents').catch(function () { return null; }),
-      api('/api/settings').catch(function () { return null; })
+      api('/api/agents').catch(function () { return null; })
     ]).then(function (rs) {
-      // 挂载期间切页 → unmount 会清掉 S.wrap/$tree 并置 S.state=null，而这里的
-      // 异步回调没有守卫，会 TypeError 并产生未捕获 rejection（其余四页都有守卫，
-      // 首页是唯一的例外 —— 复查轮 5 的 #B）。
       if (!S.wrap) return;
-      var cfg = rs[3];
-      if (cfg && cfg.app && typeof cfg.app.show_tech_details === 'boolean') {
-        S.showTechDetails = cfg.app.show_tech_details;
-        try { localStorage.setItem('prism.show_tech_details', S.showTechDetails ? '1' : '0'); } catch (e) {}
-      }
       applyState(rs[0]);
       if (!S.state) throw new Error('/api/state 返回的不是配置对象');
       S.sources = Array.isArray(rs[1]) ? rs[1] : null;
@@ -1519,10 +1479,9 @@
 
   function pullHint() {
     var f = S.form;
-    if (!f.pulled) return '从上游拉取可用模型';
+    if (!f.pulled) return '';
     if (!f.pulled.ok) return '拉取失败：' + f.pulled.text;
-    return '已拉取 ' + f.pulled.total + ' 个可用模型 · 已选 ' +
-      f.models.filter(function (m) { return m.alias; }).length + ' 个';
+    return '已拉取 ' + f.pulled.total + ' 个模型';
   }
 
   function modelRow(m, i) {
@@ -1817,16 +1776,12 @@
     wrap.appendChild($unreadableBox = h('div'));
     wrap.appendChild(h('div', { class: 'sec' },
        h('div', { class: 'sechead' },
-        h('span', { class: 'cmt', text: '//' }), h('span', { class: 'stitle', text: '路由' }),
+        h('span', { class: 'stitle', text: '路由' }),
         h('span', { class: 'hr' }), $treeHint),
       $globalToolbar,
       $tree));
 
     wrap.appendChild(h('div', { class: 'sec' },
-      h('div', { class: 'sechead' },
-        h('span', { class: 'cmt', text: '//' }), h('span', { class: 'stitle', text: '添加来源' }),
-        h('span', { class: 'hr' })
-      ),
       ($form = h('div'))));
 
     wrap.appendChild($acts = h('div'));
@@ -1834,7 +1789,6 @@
     S.root.appendChild(wrap);
 
     S.form = null;
-    renderAll();
     reload();
     return {
       id: 'home',

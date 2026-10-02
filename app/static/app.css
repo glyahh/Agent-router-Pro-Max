@@ -10,52 +10,49 @@
   --mono:ui-monospace,"Cascadia Code","Cascadia Mono","SF Mono","Roboto Mono",Menlo,Monaco,Consolas,monospace;
   --sans:-apple-system,BlinkMacSystemFont,"Segoe UI Variable Text","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
 
-  /* 表面：纯白 → 极浅中性灰阶。层次克制分明，对齐 OpenAI 官网设计 */
-  --bg:#FFFFFF; --panel:#FFFFFF; --panel2:#F7F7F8; --panel3:#ECECF1;
-  --sunken:#F9F9FB; --hover:#F0F0F0;
+  /* 表面：纯白 → 极浅中性灰阶。层次克制分明，对齐 OpenAI / ChatGPT 官方设计 */
+  --bg:#FFFFFF; --panel:#FFFFFF; --panel2:#FAFAFC; --panel3:#F2F2F5;
+  --sunken:#F7F7FA; --hover:#EEEEF2;
 
-  /* 分隔线：OpenAI 标志性 1px hairline 柔和弱边框 */
-  --line:#E5E5E5; --line2:#D9D9E3; --line3:#C5C5D2;
+  /* 分隔线：OpenAI 标志性 1px hairline 极致柔和弱边框 */
+  --line:#EBEBEF; --line2:#DFDFE4; --line3:#CBCBD3;
 
   /* 文字：主黑(#0D0D0D) → 稳重中灰(#424242) → 辅助次灰(#6E6E80)（WCAG 2.1 AA 达标） */
   --fg:#0D0D0D; --fg2:#424242; --fg3:#6E6E80;
 
   /* 强调：近黑实心，与 OpenAI 官方桌面界面一模一样 */
-  --accent:#0D0D0D; --accent2:#202020; --accentdim:#ECECF1;
+  --accent:#0D0D0D; --accent2:#202020; --accentdim:#F0F0F3;
   --onaccent:#FFFFFF;
 
   /* 状态：OpenAI 经典品牌绿 #10A37F，以及克制的红与黄 */
   --ok:#10A37F;   --okdim:#D1FAE5;   --okbg:#F0FDF4;
   --bad:#EF4444;  --baddim:#FEE2E2;  --badbg:#FEF2F2;
   --warn:#F59E0B; --warndim:#FEF3C7; --warnbg:#FFFBEB;
-  --infobg:#F4F4F5;
+  --infobg:#F4F4F6;
 
   --grid:transparent;
   --top-h:50px; --status-h:0px;
-  --track:#E5E5E5;
-  --r-card:12px; --r-ctl:8px; --r-pill:9999px;
-  --shadow:0 1px 3px rgba(0,0,0,.05),0 1px 2px rgba(0,0,0,.03);
+  --track:#ECECEE;
+  --r-card:10px; --r-ctl:8px; --r-pill:9999px;
+  --shadow:0 1px 3px rgba(0,0,0,.02),0 2px 6px rgba(0,0,0,.015);
 
   /* 半透明层 / 遮罩 / 滚动条 / 骨架 / 搜索高亮 */
-  --topbg:rgba(255,255,255,.82);
+  --topbg:rgba(255,255,255,.86);
   --scroll:#D1D1D6; --scrollh:#AEAEB2;
   --scrim:rgba(0,0,0,.36);
-  --pop:0 12px 32px -4px rgba(0,0,0,.12),0 4px 12px -2px rgba(0,0,0,.06);
-  --pop2:0 6px 20px -2px rgba(0,0,0,.08),0 2px 6px -1px rgba(0,0,0,.04);
+  --pop:0 12px 32px -4px rgba(0,0,0,.10),0 4px 12px -2px rgba(0,0,0,.04);
+  --pop2:0 6px 20px -2px rgba(0,0,0,.06),0 2px 6px -1px rgba(0,0,0,.03);
   --skel1:#F4F4F5; --skel2:#E4E4E7;
   --hl:#FEF08A;
-  --knob-shadow:0 1px 2px rgba(0,0,0,.14);
+  --knob-shadow:0 1px 2px rgba(0,0,0,.12);
 }
 
 /* ── 深色主题（跟随系统）───────────────────────────────────────────────
-   server.py 的 system_theme() 读 HKCU\...\Themes\Personalize\AppsUseLightTheme，
-   在服务 index.html 时把 data-theme 直接写进 <html>，所以首屏就是对的，
-   不会先闪一下白再变暗。app.js 每个轮询周期（5 秒）跟一次 /api/theme，系统换主题不必重启。
    严格对齐 OpenAI Dark 灰度体系。 */
 html[data-theme="dark"]{
   --bg:#212121; --panel:#262626; --panel2:#2B2B2B; --panel3:#333333;
-  --sunken:#1C1C1C; --hover:#303030;
-  --line:#333333; --line2:#404040; --line3:#525252;
+  --sunken:#1C1C1C; --hover:#2F2F2F;
+  --line:#2C2C2C; --line2:#383838; --line3:#4A4A4A;
   --fg:#ECECEC; --fg2:#B4B4B4; --fg3:#8E8E8E;
   --accent:#ECECEC; --accent2:#D1D1D1; --accentdim:#333333;
   --onaccent:#171717;
@@ -63,16 +60,16 @@ html[data-theme="dark"]{
   --bad:#F87171;  --baddim:#450A0A;  --badbg:#260808;
   --warn:#FBBF24; --warndim:#451A03; --warnbg:#261204;
   --infobg:#2B2B2B;
-  --track:#333333;
-  --topbg:rgba(33,33,33,.82);
+  --track:#313131;
+  --topbg:rgba(33,33,33,.86);
   --scroll:#444444; --scrollh:#555555;
   --scrim:rgba(0,0,0,.65);
-  --pop:0 16px 40px -4px rgba(0,0,0,.6),0 6px 16px -2px rgba(0,0,0,.45);
-  --pop2:0 8px 24px -2px rgba(0,0,0,.5),0 2px 8px -1px rgba(0,0,0,.35);
+  --pop:0 16px 40px -4px rgba(0,0,0,.55),0 6px 16px -2px rgba(0,0,0,.4);
+  --pop2:0 8px 24px -2px rgba(0,0,0,.45),0 2px 8px -1px rgba(0,0,0,.3);
   --skel1:#262626; --skel2:#333333;
   --hl:#4E3A08;
-  --knob-shadow:0 1px 3px rgba(0,0,0,.6);
-  --shadow:0 1px 3px rgba(0,0,0,.4),0 2px 6px rgba(0,0,0,.3);
+  --knob-shadow:0 1px 3px rgba(0,0,0,.5);
+  --shadow:0 1px 3px rgba(0,0,0,.25),0 2px 6px rgba(0,0,0,.15);
 }
 *{box-sizing:border-box}
 html,body{height:100%}
@@ -172,8 +169,9 @@ a{color:inherit;text-decoration:none}
 body.is-maximized .win-resizer{display:none}
 
 /* ── 主体 ─────────────────────────────── */
-main{background:var(--bg);padding:32px 32px 40px}
-.view{flex:1 1 auto;min-height:0;overflow:auto;position:relative;contain:layout}
+.view{flex:1 1 auto;min-height:0;overflow:auto;position:relative;contain:layout;padding:20px 24px}
+.view > *{animation:pageFadeIn .15s cubic-bezier(.16,1,.3,1) both}
+@keyframes pageFadeIn{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
 .sec{margin-bottom:40px}
 .sechead{display:flex;align-items:baseline;gap:10px;margin-bottom:16px}
 /* '//' 是深色极客风的装饰，浅色版里没有它的位置，直接不显示（DOM 不动，只隐装饰） */
@@ -244,7 +242,7 @@ main{background:var(--bg);padding:32px 32px 40px}
     transition:border-color .14s cubic-bezier(.16,1,.3,1),box-shadow .14s cubic-bezier(.16,1,.3,1)}
 .f input:not([type="checkbox"])::placeholder{color:var(--fg3)}
 .f input:not([type="checkbox"]):focus,.f select:focus,textarea.inp:focus{outline:none;border-color:var(--fg);
-    box-shadow:0 0 0 1px var(--fg)}
+    box-shadow:0 0 0 1.5px var(--fg)}
 .f input:not([type="checkbox"]):disabled,.f select:disabled{color:var(--fg3);background:var(--panel2);cursor:not-allowed}
 .f .sub{font-size:12px;color:var(--fg3)}
 .f .sub.bad{color:var(--bad)}
@@ -263,40 +261,42 @@ main{background:var(--bg);padding:32px 32px 40px}
      background:var(--panel);border-radius:var(--r-ctl);padding:8px 12px;cursor:default;
      transition:all .14s cubic-bezier(.16,1,.3,1)}
 .del:hover{color:var(--bad);border-color:var(--baddim);background:var(--badbg)}
-/* 开关：设置页四个布尔项用它 */
+/* 开关：现代灵动胶囊风格 */
 .sw2{display:inline-flex;align-items:center;gap:9px;cursor:default;user-select:none}
-.sw2 i{width:36px;height:20px;border-radius:var(--r-pill);background:var(--line2);border:1px solid transparent;position:relative;transition:background .16s cubic-bezier(.16,1,.3,1)}
-.sw2 i::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:var(--panel);box-shadow:var(--knob-shadow);transition:transform .16s cubic-bezier(.16,1,.3,1)}
+.sw2 i{width:32px;height:18px;border-radius:var(--r-pill);background:var(--line2);border:1px solid transparent;position:relative;transition:all .18s cubic-bezier(.16,1,.3,1)}
+.sw2 i::after{content:"";position:absolute;top:1px;left:1px;width:14px;height:14px;border-radius:50%;background:var(--panel);box-shadow:var(--knob-shadow);transition:transform .18s cubic-bezier(.16,1,.3,1)}
 .sw2.on i{background:var(--accent);border-color:var(--accent)}
-.sw2.on i::after{transform:translateX(16px);background:var(--onaccent)}
+.sw2.on i::after{transform:translateX(14px);background:var(--onaccent)}
 .sw2 b{font-size:13px;font-weight:400;color:var(--fg2)}
 
-/* ── 按钮（对齐 OpenAI 触感动效）──────────── */
+/* ── 按钮（对齐 OpenAI 灵动微交互）──────────── */
 .acts{display:flex;gap:10px;align-items:center;margin-top:22px}
 .acts.wrap{flex-wrap:wrap}
 .btn{font-family:inherit;font-size:13px;font-weight:500;letter-spacing:0;padding:8px 14px;
      border-radius:var(--r-ctl);border:1px solid var(--line2);background:var(--panel);
      color:var(--fg);cursor:default;display:inline-flex;align-items:center;justify-content:center;gap:7px;white-space:nowrap;
-     transition:all .14s cubic-bezier(.16,1,.3,1)}
-.btn:hover{background:var(--hover);border-color:var(--line3)}
-.btn:active{transform:scale(.98)}
+     transition:all .16s cubic-bezier(.16,1,.3,1)}
+.btn:hover{background:var(--hover);border-color:var(--line3);transform:translateY(-0.5px)}
+.btn:active{transform:scale(.985) translateY(0)}
 .btn.pri{background:var(--accent);border-color:var(--accent);color:var(--onaccent)}
-.btn.pri:hover{background:var(--accent2);border-color:var(--accent2);color:var(--onaccent)}
-.btn.pri:active{transform:scale(.98)}
+.btn.pri:hover{background:var(--accent2);border-color:var(--accent2);color:var(--onaccent);box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.btn.pri:active{transform:scale(.985)}
 .btn.sm{padding:5px 10px;font-size:12px;border-radius:6px}
 .btn.ghost{background:transparent;border-color:transparent}
 .btn.ghost:hover{background:var(--hover)}
-.btn.ghost:active{transform:scale(.98)}
+.btn.ghost:active{transform:scale(.985)}
 .btn.danger{color:var(--bad);border-color:var(--baddim);background:var(--panel)}
 .btn.danger:hover{background:var(--badbg);border-color:var(--bad)}
-.btn.danger:active{transform:scale(.98)}
+.btn.danger:active{transform:scale(.985)}
 .btn[disabled],.btn.dis{opacity:.45;pointer-events:none;transform:none !important}
 .spacer{flex:1}
 .link{font-size:13px;color:var(--fg);text-decoration:underline;text-underline-offset:3px;cursor:default}
 .link:hover{color:var(--fg2)}
 
 /* ── 卡片 / 表格 ──────────────────────── */
-.card{border:1px solid var(--line);border-radius:var(--r-card);background:var(--panel);overflow:hidden;box-shadow:var(--shadow)}
+.card{border:1px solid var(--line);border-radius:var(--r-card);background:var(--panel);overflow:hidden;box-shadow:var(--shadow);
+      transition:border-color .16s cubic-bezier(.16,1,.3,1),box-shadow .16s cubic-bezier(.16,1,.3,1)}
+.card:hover{border-color:var(--line2)}
 .cardh{display:flex;align-items:center;gap:10px;padding:13px 16px;border-bottom:1px solid var(--line);
        background:var(--panel2);font-size:13.5px;font-weight:600;color:var(--fg)}
 .cardb{padding:16px}
@@ -587,15 +587,8 @@ noscript .statebox{margin:40px auto;max-width:640px}
   border-top:4px solid transparent;border-bottom:4px solid transparent}
 .graph .gnode.open > .grow > .gchev{transform:rotate(90deg)}
 
-/* 层级圆点：L1 大而实，往下依次变淡，一眼看出自己在哪一层 */
-.graph .gdot{flex:0 0 8px;width:8px;height:8px;border-radius:999px;
-  background:var(--fg3);transition:background .16s}
-.graph .lv1 > .grow > .gdot{width:10px;height:10px;flex-basis:10px;background:var(--accent)}
-.graph .lv1 > .grow > .gdot.ok{background:var(--ok)}
-.graph .lv1 > .grow > .gdot.warn{background:var(--warn)}
-.graph .lv1 > .grow > .gdot.bad{background:var(--bad)}
-.graph .lv2 > .grow > .gdot{background:var(--line3);border:1px solid var(--fg3)}
-.graph .lv4 > .grow > .gdot{display:none}
+/* 层级圆点已全面移除，兜底隐藏 */
+.graph .gdot{display:none!important}
 
 .graph .glabel{font-size:13.5px;color:var(--fg);min-width:0;overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap}
@@ -676,7 +669,7 @@ noscript .statebox{margin:40px auto;max-width:640px}
 .home-acts .hspacer{flex:1;min-width:8px}
 
 @media (prefers-reduced-motion:reduce){
-  .graph .gkids,.graph .grow,.graph .ghead,.graph .gacts,.graph .gdot,.graph .gchev,
+  .graph .gkids,.graph .grow,.graph .ghead,.graph .gacts,.graph .gchev,
   .graph .gacts .gbtn{transition-duration:0s}
   .graph .gnode.open > .gkids .gnode{animation:none}
   body{animation:none}

@@ -357,7 +357,7 @@
     var windows = quota ? normalizeWindows(quota.windows || quota.signals) : [];
     var models = quota ? normalizeModelQuotas(quota.model_quotas || quota.modelQuotas) : [];
 
-    var head = '<div class="sechead"><span class="cmt">//</span>'
+    var head = '<div class="sechead">'
       + '<span class="stitle">配额</span><span class="hr"></span></div>';
 
     if (windows.length === 0 && models.length === 0) {
@@ -499,14 +499,13 @@
     var hist = normalizeHistory(data && data.history);
     for (i = 0; i < hist.length; i++) { if (!seen[hist[i].date]) { seen[hist[i].date] = 1; days++; } }
 
-    var head = '<div class="sechead"><span class="cmt">//</span>'
-      + '<span class="stitle">请求计数 · 按来源</span><span class="hr"></span></div>';
+    var head = '<div class="sechead">'
+      + '<span class="stitle">请求分布</span><span class="hr"></span></div>';
 
     var html = '<div class="sec">' + head;
 
     if (!merged.length) {
-      html += emptySlotHTML('暂无请求计数',
-        '暂无经过网关的请求记录。') + '</div>';
+      html += emptySlotHTML('暂无记录', '') + '</div>';
       return html;
     }
 
@@ -557,9 +556,7 @@
       + '<div class="legend">'
       + '<span><i class="sw ok"></i>成功 <b>' + totalOK + '</b></span>'
       + '<span><i class="sw bad"></i>失败 <b>' + totalBad + '</b></span>'
-      + '<span><i class="sw idle"></i>空闲桶 <b>' + idle + '</b></span>'
       + '</div>'
-      + (flat ? '<div class="u-note">当前时间窗口内暂无请求数据。</div>' : '')
       + '<div class="chart-wrap">'
       + yAxisHtml
       + gridHtml
@@ -573,13 +570,12 @@
   function renderSourceTable(data) {
     var counts = normalizeCounts(data && data.counts);
 
-    var head = '<div class="sechead"><span class="cmt">//</span>'
+    var head = '<div class="sechead">'
       + '<span class="stitle">来源明细</span><span class="hr"></span></div>';
 
     var html = '<div class="sec">' + head;
     if (!counts.length) {
-      html += emptySlotHTML('暂无来源数据',
-        '暂无各来源调用统计。') + '</div>';
+      html += emptySlotHTML('暂无数据', '') + '</div>';
       return html;
     }
 
@@ -645,15 +641,14 @@
     }
     rangeSeg += '</span>';
 
-    var head = '<div class="sechead"><span class="cmt">//</span>'
+    var head = '<div class="sechead">'
       + '<span class="stitle">长期历史</span><span class="hr"></span>'
       + seg + rangeSeg
       + '</div>';
 
     var html = '<div class="sec">' + head;
     if (!rows.length) {
-      html += emptySlotHTML('暂无历史记录',
-        '尚未采集到历史采样数据。') + '</div>';
+      html += emptySlotHTML('暂无记录', '') + '</div>';
       return html;
     }
 
@@ -700,7 +695,7 @@
       }
       if (names.length > 1) {
         body += '<tr class="u-sum"><td>' + esc(byWeek ? g2.period + ' 起一周' : g2.period) + '</td>'
-          + '<td>合计 ' + names.length + ' 来源</td>'
+          + '<td>合计</td>'
           + '<td class="r">' + g2.ok + '</td>'
           + '<td class="r' + (g2.bad ? ' u-bad' : '') + '">' + g2.bad + '</td>'
           + '<td class="r">—</td><td></td></tr>';
@@ -739,7 +734,7 @@
     return '<div class="u-toolbar">'
       + '<span class="pagetag">用量</span>'
       + '<span class="u-spacer"></span>'
-      + '<span class="u-updated" data-role="stamp">尚未取数</span>'
+      + '<span class="u-updated" data-role="stamp"></span>'
       + '<span class="btn" data-role="refresh">刷新</span>'
       + '</div>'
       + '<div class="u-body" data-role="body"></div>'
@@ -1072,6 +1067,8 @@
         var tt = state.root.querySelector('[data-role="chart-tooltip"]');
         if (tt) { tt.style.display = 'none'; tt.style.opacity = '0'; }
       }
+      // 允许下次 mount 重新注册 onUnmount，否则二次进入后双保险失效、定时器泄漏
+      UsagePage._cleanupBound = false;
       return UsagePage;
     },
 

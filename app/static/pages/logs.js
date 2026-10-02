@@ -74,7 +74,6 @@
   }
   function sechead(title, hint, extra) {
     return h('div', { class: 'sechead' }, [
-      h('span', { class: 'cmt', text: '//' }),
       h('span', { class: 'stitle', text: title }),
       h('span', { class: 'hr' }),
       hint ? h('span', { class: 'hint', text: hint }) : null,
@@ -357,12 +356,10 @@
 
   function logView() {
     if (!S.raw.length) {
-      return statebox('empty', S.err ? '未获取到日志' : '暂无日志',
-        S.err ? '正在尝试重新连接…' : '网关尚无新的日志输出。');
+      return statebox('empty', S.err ? '未获取到日志' : '暂无日志');
     }
     if (!S.filtered.length) {
-      return statebox('empty', '无匹配日志',
-        '当前筛选无结果（已缓冲 ' + S.raw.length + ' 行' + (S.hiddenCount ? '，隐藏管理流量 ' + S.hiddenCount + ' 行' : '') + '）。');
+      return statebox('empty', '无匹配日志');
     }
 
     currentMatches = [];
@@ -522,7 +519,7 @@
     if (S.errorErr) return notice('bad', '错误日志不可用：' + S.errorErr, '正文仍可用。');
     if (!S.errorFiles) return statebox('spinner', '正在读取错误日志列表…', '');
     var files = S.errorFiles.files;
-    if (!files.length) return statebox('empty', '暂无错误日志文件', '最近没有失败请求。');
+    if (!files.length) return statebox('empty', '暂无错误日志文件');
 
     var rows = files.map(function (f) {
       var name = String(f.name || '');
@@ -540,7 +537,6 @@
     });
 
     return h('div', null, [
-      S.errorFiles.dir ? h('div', { class: 'toolbar' }, [h('span', { class: 'hint', text: S.errorFiles.dir })]) : null,
       table(
         [{ t: '文件' }, { t: '状态' }, { t: '大小', cls: 'r' }, { t: '修改时间' }, { t: '操作', cls: 'act' }],
         rows, null)
@@ -559,7 +555,7 @@
   function rawFetch(path, method) {
     var ctl = (typeof AbortController === 'function') ? new AbortController() : null;
     var timer = null;
-    var init = { method: method, headers: { 'Accept': 'application/json' }, cache: 'no-store' };
+    var init = { method: method, headers: { 'Accept': 'application/json', 'X-Prism-Token': sessionStorage.getItem('prism-ct') || '' }, cache: 'no-store' };
     if (ctl) { init.signal = ctl.signal; timer = setTimeout(function () { ctl.abort(); }, FETCH_TIMEOUT_MS); }
     function stop() { if (timer) { clearTimeout(timer); timer = null; } }
     return fetch('/' + path, init).then(function (r) {

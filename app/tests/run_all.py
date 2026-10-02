@@ -20,6 +20,7 @@ CASES = [
     ('health 聚合层（假 payload 注入）', 'test_health_payload.py'),
     ('启动路径（main.py 纯逻辑）', 'test_main_startup.py'),
     ('窗口控制与拖拽缩放 API', 'test_window_api.py'),
+    ('真实端到端 (E2E) 浏览器加载性能', 'test_e2e_real_perf.py'),
 ]
 
 

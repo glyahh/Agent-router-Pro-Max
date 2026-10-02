@@ -357,17 +357,17 @@
         });
         var tail;
         if (loadFailed) tail = '读取失败';
-        else if (loadEmpty) tail = '无可读设置';
-        else if (!loaded) tail = '读取中…';
+        else if (loadEmpty) tail = '';
+        else if (!loaded) tail = '';
         else if (busy) tail = '保存中';
-        else if (bad) tail = bad + ' 项保存失败';
-        else if (dirty) tail = dirty + ' 项待保存';
-        else if (degradedScope[scope]) tail = '部分项读不到';
+        else if (bad) tail = '保存失败';
+        else if (dirty) tail = '待保存';
+        else if (degradedScope[scope]) tail = '部分受限';
         else tail = '';
         host.textContent = tail;
-        host.style.color = (bad || loadFailed || loadEmpty) ? 'var(--bad,#EF4444)'
+        host.style.color = (bad || loadFailed) ? 'var(--bad,#EF4444)'
           : (degradedScope[scope] ? 'var(--warn,#EAB308)'
-          : (dirty || busy ? 'var(--accent2,#6366F1)' : ''));
+          : (dirty || busy ? 'var(--accent,#0D0D0D)' : ''));
       });
     }
 
@@ -646,8 +646,7 @@
       // 改这里的顺序时，同步改 .ps-row 的 grid-template-columns。
       c.row = h('div', { class: 'ps-row' }, [
         h('div', {}, [
-          h('div', { class: 'ps-lbl', text: d.label }),
-          d.hint ? h('div', { class: 'ps-hint', text: d.hint }) : null
+          h('div', { class: 'ps-lbl', text: d.label })
         ]),
         stat,
         ctl
@@ -664,7 +663,6 @@
       fields.forEach(function (d) { list.appendChild(buildRow(d)); });
       var sec = h('div', { class: 'sec' }, [
         h('div', { class: 'sechead' }, [
-          h('span', { class: 'cmt', text: '//' }),
           h('span', { class: 'stitle', text: title }),
           h('span', { class: 'hr' }),
           hint
@@ -704,13 +702,12 @@
       ]);
     }
 
-    root.appendChild(buildSection('//', '网关', 'gateway', byScope('gateway')));
+    root.appendChild(buildSection('', '网关', 'gateway', byScope('gateway')));
 
-    root.appendChild(buildSection('//', '应用', 'app', byScope('app')));
+    root.appendChild(buildSection('', '应用', 'app', byScope('app')));
 
     var advSec = h('div', { class: 'sec' }, [
       h('div', { class: 'sechead' }, [
-        h('span', { class: 'cmt', text: '//' }),
         h('span', { class: 'stitle', text: '高级配置' }),
         h('span', { class: 'hr' }),
         null

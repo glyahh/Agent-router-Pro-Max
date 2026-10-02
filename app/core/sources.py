@@ -21,6 +21,7 @@ import math
 import os
 import re
 import shutil
+import threading
 import time
 import logging
 from datetime import datetime
@@ -193,6 +194,9 @@ def _plan_mutex():
         return None
     if _MUTEX_HANDLE is None:
         _MUTEX_HANDLE = _k32.CreateMutexW(None, False, _MUTEX_NAME)
+        if not _MUTEX_HANDLE and ctypes.get_last_error() == 5:
+            # 无权建 Global\（标准用户）→ 降级 Local\，同登录会话内跨进程仍互斥
+            _MUTEX_HANDLE = _k32.CreateMutexW(None, False, 'Local\\PrismRoutingPlan')
     return _MUTEX_HANDLE
 
 
@@ -284,7 +288,7 @@ def _write_plan(plan):
     """写 plan。临时名带 pid 是硬要求——rs.write_json 的临时名固定为 <path>.tmp，
     两个控制端同时写会抢同一个临时文件，os.replace 直接失败。"""
     path = _plan_path()
-    temp = path.parent / (path.name + '.tmp-%d' % os.getpid())
+    temp = path.parent / (path.name + '.tmp-%d-%d' % (os.getpid(), threading.get_ident()))
     temp.write_text(json.dumps(rs.clean_plan(plan), ensure_ascii=False, indent=2), encoding='utf-8')
     os.replace(temp, path)
 

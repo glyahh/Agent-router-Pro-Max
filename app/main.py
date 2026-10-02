@@ -27,11 +27,9 @@ script/Start-Proxy.ps1 起的它，也可能挂着别的客户端在用。所以
 
 from __future__ import annotations
 
-import argparse
 import ctypes
-import html
+import atexit
 import logging
-import logging.handlers
 import os
 import secrets
 import socket
@@ -43,9 +41,39 @@ import traceback
 from ctypes import wintypes
 from pathlib import Path
 
+# WebView2 启动参数极致加速：开启 GPU 光栅化与零拷贝，禁用冗余非核心特性与外围检查，绕过回环代理检测
+WEBVIEW2_ACCEL_ARGS = (
+    '--disable-features=Translate,OptimizationHints,MediaRouter,DialMediaRouteProvider,'
+    'CalculateNativeWinOcclusion,InterestFeedContentSuggestions,ElasticOverscroll '
+    '--enable-gpu-rasterization --enable-zero-copy '
+    '--disable-background-timer-throttling --disable-renderer-backgrounding '
+    '--disable-component-update --disable-extensions --disable-default-apps '
+    '--disable-sync --no-first-run --disable-breakpad --disable-domain-reliability '
+    '--renderer-process-limit=2 --enable-fast-unload --disable-hang-monitor '
+    '--proxy-bypass-list=<-loopback>'
+)
+os.environ['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS'] = WEBVIEW2_ACCEL_ARGS
+
 import webview          # pywebview 6.2.1（app\.venv 已装）
-import pystray
-from PIL import Image, ImageDraw
+
+def _apply_edgechromium_patch() -> None:
+    # 延迟按需补丁 pywebview edgechromium，防止其赋值覆盖加速参数；剥离顶层 CLR 加载耗时
+    try:
+        from webview.platforms import edgechromium as _ec
+        if getattr(_ec, '_prism_patched', False):
+            return
+        _orig_ec_init = _ec.EdgeChrome.__init__
+        def _patched_ec_init(self, form, window, cache_dir):
+            _orig_ec_init(self, form, window, cache_dir)
+            if hasattr(self, 'webview') and hasattr(self.webview, 'CreationProperties') and self.webview.CreationProperties:
+                curr = self.webview.CreationProperties.AdditionalBrowserArguments or ''
+                self.webview.CreationProperties.AdditionalBrowserArguments = (curr + ' ' + WEBVIEW2_ACCEL_ARGS).strip()
+        _ec.EdgeChrome.__init__ = _patched_ec_init
+        _ec._prism_patched = True
+    except Exception:
+        pass
+
+# pystray、PIL、sqlite3/sampling 属于 heavy 模块，改为后台/按需导入，首屏主线程零开销
 
 APP_DIR = Path(__file__).resolve().parent
 if str(APP_DIR) not in sys.path:
@@ -53,7 +81,6 @@ if str(APP_DIR) not in sys.path:
 
 from core import bridge                     # noqa: E402  （顺带把 sys.path 理顺）
 from core import identity                   # noqa: E402  （网关身份核对，实现见 core\identity.py）
-from core import sampling                   # noqa: E402  （托盘 tip 的今日计数）
 import server                               # noqa: E402
 
 ROOT = bridge.ROOT                          # D:\MY_DESIGN\Agent-router-Pro-Max
@@ -99,7 +126,7 @@ class _POINT(ctypes.Structure):
 _CACHED_HWND = None
 
 
-def _own_hwnd(retries: int = 20):
+def _own_hwnd(retries: int = 5):
     """找本进程的顶层窗口句柄。
 
     pywebview 不把 HWND 暴露给 Python（只给 pywebview.Window），所以只能这样找。
@@ -149,7 +176,7 @@ def _own_hwnd(retries: int = 20):
         if found:
             _CACHED_HWND = found[0]
             return found[0]
-        time.sleep(0.1)
+        time.sleep(0.01)
     return None
 
 
@@ -180,15 +207,24 @@ def hide_native_titlebar(window=None) -> None:
     global _SUBCLASS_WNDPROC, _OLD_WNDPROC, _CACHED_HWND
     if window is not None and hasattr(window, 'native') and hasattr(window.native, 'Handle'):
         try:
-            _CACHED_HWND = window.native.Handle.ToInt64()
+            val = window.native.Handle.ToInt64()
+            if isinstance(val, int) and val > 0:
+                _CACHED_HWND = val
         except Exception:
             pass
-    if window is not None and hasattr(window, 'events') and hasattr(window.events, 'shown'):
+    if not _CACHED_HWND and window is not None and hasattr(window, 'events') and hasattr(window.events, 'shown'):
         try:
-            window.events.shown.wait(timeout=2.0)
+            window.events.shown.wait(timeout=0.005)
         except Exception:
             pass
-    hwnd = _own_hwnd()
+        if hasattr(window, 'native') and hasattr(window.native, 'Handle'):
+            try:
+                val = window.native.Handle.ToInt64()
+                if isinstance(val, int) and val > 0:
+                    _CACHED_HWND = val
+            except Exception:
+                pass
+    hwnd = _CACHED_HWND or _own_hwnd()
     if not hwnd:
         log('恢复边缘缩放：没找到窗口句柄，跳过')
         return
@@ -229,6 +265,11 @@ def hide_native_titlebar(window=None) -> None:
         user32.SetWindowPos(wintypes.HWND(hwnd), None, 0, 0, 0, 0,
                             SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER)
 
+        # 显式显示并置顶窗口，杜绝无终端或独立打包拉起时窗口未置于可见层
+        SW_SHOW = 5
+        user32.ShowWindow(wintypes.HWND(hwnd), SW_SHOW)
+        user32.SetForegroundWindow(wintypes.HWND(hwnd))
+
         # 4. DWM 圆角与主题
         try:
             ctypes.windll.dwmapi.DwmSetWindowAttribute(
@@ -248,6 +289,24 @@ def hide_native_titlebar(window=None) -> None:
         log('frameless 窗口已成功子类化并恢复 WS_THICKFRAME（边缘缩放/Snap，零非客户区）')
     except Exception:
         log('恢复边缘缩放失败：\n' + traceback.format_exc())
+
+
+def bring_existing_to_front(hwnd) -> bool:
+    """唤醒并前置已有窗口。"""
+    if not hwnd:
+        return False
+    user32 = ctypes.windll.user32
+    try:
+        SW_RESTORE = 9
+        SW_SHOW = 5
+        if user32.IsIconic(wintypes.HWND(hwnd)):
+            user32.ShowWindow(wintypes.HWND(hwnd), SW_RESTORE)
+        else:
+            user32.ShowWindow(wintypes.HWND(hwnd), SW_SHOW)
+        user32.SetForegroundWindow(wintypes.HWND(hwnd))
+        return True
+    except Exception:
+        return False
 
 
 def make_window_api(shell):
@@ -523,6 +582,20 @@ def make_window_api(shell):
 
         def close(self) -> None:
             """走和点原生 X 完全同一条路径（close_to_tray 时收到托盘）。"""
+            hwnd = _get_hwnd()
+            if hwnd:
+                try:
+                    r = _RECT()
+                    ctypes.windll.user32.GetWindowRect(wintypes.HWND(hwnd), ctypes.byref(r))
+                    w, h = r.right - r.left, r.bottom - r.top
+                    if w >= 900 and h >= 620:
+                        cur_st = server.read_settings()
+                        app_st = cur_st.get('app') or {}
+                        app_st['window_width'] = w
+                        app_st['window_height'] = h
+                        server.write_settings({'gateway': cur_st.get('gateway') or {}, 'app': app_st})
+                except Exception:
+                    pass
             if shell.request_close():
                 shell.destroy_window()
 
@@ -766,6 +839,18 @@ def acquire_single_instance(console_port: int) -> bool:
     return True
 
 
+def _release_single_instance() -> None:
+    global _mutex_handle
+    if _mutex_handle:
+        k32 = ctypes.WinDLL('kernel32', use_last_error=True)
+        k32.CloseHandle.argtypes = (ctypes.c_void_p,)
+        k32.CloseHandle(_mutex_handle)
+        _mutex_handle = None
+
+
+atexit.register(_release_single_instance)
+
+
 # --------------------------------------------------------------------------- 网关
 
 def gateway_listening(timeout: float = 0.5) -> bool:
@@ -794,8 +879,8 @@ def gateway_is_prisms_to_launch() -> bool:
     return (GATEWAY_HOST, GATEWAY_PORT) == (DEFAULT_GATEWAY_HOST, DEFAULT_GATEWAY_PORT)
 
 
-def ensure_gateway() -> str:
-    """确保网关端口在监听。返回 'running' / 'started' / 'foreign:说明' / 'failed:原因'。
+def ensure_gateway(wait: bool = True) -> str:
+    """确保网关端口在监听。返回 'running' / 'started' / 'starting' / 'foreign:说明' / 'failed:原因'。
 
     **不在监听才拉**：已经在跑就一个字节都不动（README 里承诺"你自己的网关不会被顶掉"）。
 
@@ -803,7 +888,7 @@ def ensure_gateway() -> str:
     网关（实测就是这样）。那种情况下返回 'foreign:...' 而不是 'running'，让托盘和
     启动日志如实说出来——监控页/日志页拿着别人的数据当真，比"网关未运行"更糟。
     """
-    if gateway_listening():
+    if gateway_listening(timeout=0.15):
         who = identity.gateway_identity()
         log('网关身份：' + who['note'])
         if who['state'] == IDENTITY_FOREIGN:
@@ -830,12 +915,14 @@ def ensure_gateway() -> str:
         )
     except OSError as exc:
         return 'failed:拉起网关失败 ' + str(exc)
+    if not wait:
+        return 'starting'
     # 网关是 Go 程序，冷启动通常 1~3 秒；给 20 秒余量，期间界面照样能开
     deadline = time.time() + 20
     while time.time() < deadline:
-        if gateway_listening():
+        if gateway_listening(timeout=0.2):
             return 'started'
-        time.sleep(0.4)
+        time.sleep(0.15)
     return 'failed:网关已拉起但 %d 秒内没有监听 %d 端口，去看 %s' % (
         20, GATEWAY_PORT, ROOT / 'logs' / 'main.log')
 
@@ -845,8 +932,10 @@ def ensure_gateway() -> str:
 _icon_cache: dict = {}
 
 
-def tray_image(state: str) -> Image.Image:
+def tray_image(state: str):
     """基准图来自 design/icons/prism-64.png（已交付），状态只改右下角的圆点。"""
+    from PIL import Image, ImageDraw
+
     key = state if state in STATE_COLORS else 'unknown'
     if key in _icon_cache:
         return _icon_cache[key]
@@ -958,7 +1047,7 @@ class Shell:
             close_to_tray = True
         if close_to_tray and not self.quitting.is_set():
             self.hide_window()
-            self.notify('Prism 还在托盘里跑着。要真正退出，右键托盘图标 → 退出。')
+            self.notify('正在后台运行')
             return False
         return True
 
@@ -1072,6 +1161,7 @@ class Shell:
 
     def _tip_today(self) -> str:
         try:
+            from core import sampling
             rows = sampling.history(1)          # days=1 → 只有今天
             ok = sum(int(r.get('success') or 0) for r in rows)
             bad = sum(int(r.get('failed') or 0) for r in rows)
@@ -1156,6 +1246,7 @@ class Shell:
     # -- 托盘 --------------------------------------------------------------
 
     def build_menu(self):
+        import pystray
         return pystray.Menu(
             pystray.MenuItem('打开 Prism', self.show_window, default=True),
             pystray.MenuItem('在浏览器中打开', self.open_in_browser),
@@ -1174,6 +1265,7 @@ class Shell:
         主线程会阻塞窗口消息循环，放在普通线程会让进程退不掉。所以自己包一层
         daemon 线程，并且退出路径一定走 icon.stop()（见 quit()）。
         """
+        import pystray
         state = self.gateway_state()        # 只核一次：探两遍没意义
         icon = pystray.Icon('Prism', tray_image(state), self._tray_title(state),
                             self.build_menu())
@@ -1196,6 +1288,7 @@ def _busy_page(port: int, message: str) -> str:
     """端口被占时窗口里显示的东西。不能白屏，也不能只让用户去猜。"""
     # 脚本路径从 ROOT 拼。以前这里写死 D:\MY_DESIGN\Agent-router-Pro-Max\...，
     # 换个安装目录，那行提示就变成"照着敲，PowerShell 说找不到路径"——比不写还坏。
+    import html
     stop_selector = html.escape(str(ROOT / 'script' / 'Stop-Selector.ps1'))
     return ('<!doctype html><html lang="zh-CN"><meta charset="utf-8">'
             '<title>Prism 启动失败</title>'
@@ -1218,12 +1311,18 @@ def _busy_page(port: int, message: str) -> str:
 def run(console_port: int = DEFAULT_CONSOLE_PORT, open_window: bool = True) -> int:
     """完整启动流程。返回进程退出码。"""
     if not acquire_single_instance(console_port):
-        log('已经有一个 Prism 在运行（控制台端口 %d），这次启动安静退出。' % console_port)
-        # 桌面版没有控制台，那行日志用户永远看不到：双击、没反应、再双击、还是没反应。
-        # --no-window 是脚本事用的，弹模态框等于把它挂住；从终端起能看到日志，也不用弹。
-        # 只有"该有个窗口却没起来，而且用户看不到任何输出"的那次才把话说到他脸上。
-        if open_window and not _console_visible():
-            notify_already_running(console_port)
+        log('已经有一个 Prism 在运行（控制台端口 %d）' % console_port)
+        if open_window:
+            user32 = ctypes.windll.user32
+            user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+            user32.FindWindowW.restype = wintypes.HWND
+            existing = user32.FindWindowW(None, TITLE)
+            if existing and bring_existing_to_front(existing):
+                log('已成功激活并置顶已有 Prism 窗口（HWND=%d）' % existing)
+                return 0
+            # 找不到可见窗口时（例如收在托盘）再通知用户
+            if not _console_visible():
+                notify_already_running(console_port)
         return 0
 
     shell = Shell(console_port)
@@ -1252,17 +1351,33 @@ def run(console_port: int = DEFAULT_CONSOLE_PORT, open_window: bool = True) -> i
         notify_error(message)
         return 2
 
-    state = ensure_gateway()
-    log('网关状态：' + state)
-    # 网关起不来、或者 8317 上坐的是别人的网关，都要在托盘上说一声。这句先存着，
-    # 等 start_tray() 之后再发——那之前 shell.icon 还是 None，notify() 直接跳过。
-    startup_warning = state if (state.startswith('failed')
-                                or state.startswith('foreign')) else None
+    def _async_bootstrap_gateway(sh: Shell):
+        # 异步线程拉起网关并在就绪后刷新托盘，主线程零等待
+        if gateway_listening(timeout=0.15):
+            who = identity.gateway_identity()
+            log('网关身份：' + who['note'])
+            if who['state'] == IDENTITY_FOREIGN:
+                sh.notify('foreign:' + who['note'])
+            sh.refresh_tray()
+            return
+        gw_res = ensure_gateway(wait=True)
+        log('网关异步启动完成：' + gw_res)
+        if gw_res.startswith('failed') or gw_res.startswith('foreign'):
+            sh.notify(gw_res)
+        sh.refresh_tray()
+
+    if open_window:
+        threading.Thread(target=_async_bootstrap_gateway, args=(shell,),
+                         name='prism-gw-bootstrap', daemon=True).start()
+        startup_warning = None
+    else:
+        state = ensure_gateway(wait=True)
+        log('网关状态：' + state)
+        startup_warning = state if (state.startswith('failed')
+                                    or state.startswith('foreign')) else None
 
     # 设置里的自启意愿落到注册表；server 保存设置时会回调同一个函数
-    sync_autostart(server.read_settings())
-    # add 而不是 set：观察者是**一串**回调，server 自己也订阅了一条（采样间隔/保留天数）。
-    # 用 set 会把 server 那条挤掉，那两个设置就又变成"要重启才生效"了。
+    settings = server.read_settings()
     server.settings_observer.add(sync_autostart)
 
     try:
@@ -1277,16 +1392,6 @@ def run(console_port: int = DEFAULT_CONSOLE_PORT, open_window: bool = True) -> i
         if not open_window:
             return 2
         # 这一支**故意不调 shell.set_window()**，不是漏了。
-        #
-        # set_window() 会把 shell._on_closing 挂到窗口的 closing 事件上，而
-        # close_to_tray 默认 true 时 _on_closing 返回 False —— 取消关闭。于是：
-        # 用户点 X，窗口消失、进程还活着、托盘又没起（start_tray() 在下面，这一支
-        # 根本走不到），界面上再也找不到它；它同时攥着单实例互斥体，用户腾出端口后
-        # 重新双击 Prism，run() 直接 return 0 —— 没窗口、没报错、没托盘。
-        #
-        # 这张说明页的用途就是"看一眼去处理端口"，点 X 就该是真关。不挂 _on_closing
-        # 也就不需要那层 try/finally：webview.start() 一返回，进程退出，互斥体随进程
-        # 释放。所以这里只 create_window，不 set_window。
         webview.create_window(TITLE, html=_busy_page(console_port, str(exc)),
                               width=760, height=560)
         webview.start()
@@ -1294,15 +1399,40 @@ def run(console_port: int = DEFAULT_CONSOLE_PORT, open_window: bool = True) -> i
     shell.httpd = httpd
     log('控制台已监听 ' + shell.url)
 
-    shell.start_tray()
-    if startup_warning:
-        # 现在 icon 才就绪。这句话放在 start_tray() 之前是白发——notify() 会安静跳过。
-        shell.notify(startup_warning)
-    # 守护线程每 5 秒刷一次托盘：颜色跟着端口探测走，tip 里的今日计数与当前路由
-    # 由 tray_tip() 自己按 TRAY_TIP_INTERVAL 节流。两种模式都要刷——--no-window
-    # 下不刷的话，托盘的提示会永远停在启动那一刻。
-    threading.Thread(target=_status_loop, args=(shell,), name='prism-status',
-                     daemon=True).start()
+    # 异步预热本地控制台 HTTP，消除 WebView2 首次握手延迟
+    def _warmup_http(target_url: str):
+        try:
+            import urllib.request
+            req = urllib.request.Request(target_url, headers={'User-Agent': 'Prism-Warmup'})
+            with urllib.request.urlopen(req, timeout=0.8):
+                pass
+        except Exception:
+            pass
+    threading.Thread(target=_warmup_http, args=(shell.url,), name='prism-warmup', daemon=True).start()
+
+    def _init_tray_worker(sh: Shell, warn: str | None):
+        try:
+            sync_autostart(settings)
+        except Exception:
+            pass
+        sh.start_tray()
+        if warn:
+            sh.notify(warn)
+        threading.Thread(target=_status_loop, args=(sh,), name='prism-status', daemon=True).start()
+
+    if open_window:
+        threading.Thread(target=_init_tray_worker, args=(shell, startup_warning),
+                         name='prism-tray-init', daemon=True).start()
+    else:
+        try:
+            sync_autostart(settings)
+        except Exception:
+            pass
+        shell.start_tray()
+        if startup_warning:
+            shell.notify(startup_warning)
+        threading.Thread(target=_status_loop, args=(shell,), name='prism-status',
+                         daemon=True).start()
 
     if not open_window:
         # 没有窗口时 webview.start() 不会跑，主线程必须自己等着，否则进程直接退出、
@@ -1324,19 +1454,34 @@ def run(console_port: int = DEFAULT_CONSOLE_PORT, open_window: bool = True) -> i
     # 禁用 pywebview 内置的 JS 轮询坐标伪拖拽，手感顺滑且完美支持 Windows Snap。
     webview.settings['DRAG_REGION_SELECTOR'] = '.none-pywebview-drag'
 
+    # 恢复记忆的窗口尺寸
+    app_cfg = settings.get('app') or {}
+    win_w = max(900, min(3840, int(app_cfg.get('window_width') or 1180)))
+    win_h = max(620, min(2160, int(app_cfg.get('window_height') or 800)))
+
     # 令牌拼在窗口 URL 上（?t=）：app.js 首次读到就存 sessionStorage，请求全程带头。
     # 回环口上的 URL 不出本机；令牌只走这一条路，不打日志、不进环境变量。
-    bg_color = '#1B1B1B' if server.effective_theme() == 'dark' else '#FFFFFF'
+    # 深色模式底色严格对齐 CSS --bg (#212121)，消除首帧色差抖动
+    bg_color = '#212121' if server.effective_theme() == 'dark' else '#FFFFFF'
     window = webview.create_window(TITLE, shell.url + '?t=' + console_token,
-                                   width=1180, height=800,
+                                   width=win_w, height=win_h,
                                    min_size=(900, 620), text_select=True,
                                    background_color=bg_color,
                                    js_api=make_window_api(shell),
                                    frameless=True)
     shell.set_window(window)
+    cache_dir = os.path.join(os.environ.get('LOCALAPPDATA') or str(ROOT), 'Prism', 'webview2_cache')
+    try:
+        os.makedirs(cache_dir, exist_ok=True)
+    except Exception:
+        cache_dir = None
     try:
         # func 在 GUI 循环起来之后调用，那时窗口才真的存在
-        webview.start(hide_native_titlebar, (window,))
+        _apply_edgechromium_patch()
+        if cache_dir:
+            webview.start(hide_native_titlebar, (window,), storage_path=cache_dir)
+        else:
+            webview.start(hide_native_titlebar, (window,))
     finally:
         icon = shell.icon
         if icon is not None:
@@ -1358,11 +1503,24 @@ def _status_loop(shell: Shell) -> None:
             shell.refresh_tray()
         except Exception:
             log('状态刷新失败：\n' + traceback.format_exc())
-        time.sleep(5)
+        # Event.wait 替代 sleep：退出置位后立即返回，不用等满 5 秒
+        shell.quitting.wait(5)
 
 
 def main(argv=None) -> int:
     setup_logging()          # 最早的一步：这之后的异常才有地方落
+    if argv is None and len(sys.argv) == 1:
+        # 默认双击无参极速直通路径：跳过 argparse 模块导入与构建开销
+        port = int(os.environ.get('PRISM_CONSOLE_PORT') or DEFAULT_CONSOLE_PORT)
+        try:
+            return run(port, open_window=True)
+        except Exception:
+            detail = traceback.format_exc()
+            log(detail)
+            notify_error('Prism 启动时崩溃：\n\n' + detail.strip().splitlines()[-1])
+            return 1
+
+    import argparse
     parser = argparse.ArgumentParser(
         prog='main.py',
         description='Prism 桌面控制台（默认 8318；--port 只给排障用，改动前先读 README 的 FAQ）')

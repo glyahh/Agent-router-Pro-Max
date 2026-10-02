@@ -85,7 +85,6 @@
   }
   function sechead(title, hint) {
     return h('div', { class: 'sechead' }, [
-      h('span', { class: 'cmt', text: '//' }),
       h('span', { class: 'stitle', text: title }),
       h('span', { class: 'hr' }),
       hint ? h('span', { class: 'hint', text: hint }) : null
@@ -237,15 +236,10 @@
   }
 
   function toolbar() {
-    var hint;
-    if (S.err) hint = '读取失败';
-    else if (S.lastAt) hint = '更新于 ' + clock(S.lastAt);
-    else hint = '等待首次数据';
-
+    var hint = S.err ? '读取失败' : '';
     var kids = [
-      h('span', { class: 'cmt', text: '//' }),
       h('span', { class: 'stitle', text: '网关监控' }),
-      h('span', { class: 'hint', text: hint }),
+      hint ? h('span', { class: 'hint', text: hint }) : null,
       h('span', { class: 'spacer' }),
       button('刷新', function () { load(true); }, '', S.busy)
     ];
@@ -309,77 +303,56 @@
 
     // 运行状态那一格：只有 identity 是 ok 才配说"在线"。其余三种一律降级措辞
     // ——foreign 和 unknown 都用了 .dot.warn（黄色），短板说清楚它为什么不是绿的。
-    var runCell, runHint;
+    var runCell;
     if (!running) {
       runCell = [h('span', { class: 'dot off' }), h('span', { class: 'v', text: '离线' })];
-      runHint = '未监听，检查 cli-proxy-api 进程';
     } else if (ident === 'ok') {
       runCell = [h('span', { class: 'dot' }), h('span', { class: 'v', text: '在线' })];
-      runHint = port + ' 端口可达，配置匹配';
     } else if (ident === 'foreign') {
       runCell = [h('span', { class: 'dot warn' }),
         h('span', { class: 'v', text: '在线（配置不匹配）' })];
-      runHint = '端口已连接，但配置来源不一致';
     } else {
-      // unknown，以及"端口通、identity 却是 down"这种自相矛盾的情况，都落这里。
-      // 矛盾时宁可说"没核实"，也不能挑好听的那半句说。
       runCell = [h('span', { class: 'dot warn' }),
         h('span', { class: 'v', text: '在线（身份未核实）' })];
-      runHint = '端口已连接，无法核实配置路径';
     }
 
-    // 身份那一格的值：芯片 + 那个网关实际读的配置路径（它自己命令行里的 -config）。
-    var identCell, identHint;
+    var identCell;
     if (ident === 'ok') {
       identCell = h('span', { class: 'v' }, [
-        chip('本目录', 'ok', '读取当前目录 config.yaml'),
+        chip('本目录', 'ok'),
         h('span', { text: ' ' }), h('span', { text: conf || '—' })]);
-      identHint = '指向当前目录';
     } else if (ident === 'foreign') {
       identCell = h('span', { class: 'v' }, [
-        chip('非本目录', 'warn', '指向其他目录配置'),
+        chip('非本目录', 'warn'),
         h('span', { text: ' ' }), h('span', { text: conf || '配置路径不可读' })]);
-      identHint = '未指向当前目录';
     } else if (ident === 'down') {
-      identCell = h('span', { class: 'v' }, chip('未运行', 'sm', '端口未监听'));
-      identHint = '端口未监听';
+      identCell = h('span', { class: 'v' }, chip('未运行', 'sm'));
     } else {
       identCell = h('span', { class: 'v' }, [
-        chip('未核实', 'warn', '无法获取进程配置信息'),
+        chip('未核实', 'warn'),
         h('span', { text: ' ' }), h('span', { text: conf || '—' })]);
-      identHint = '配置路径无法确认';
     }
 
     var cfgOk = g.config_ok;
-    // 圆点直接当 .kv .r 的孩子：.r 是 flex，它才拿得到 6px 的尺寸
-    // （app.css 的 .dot 没有 display，放在非 flex 的父级里会缩成 0 宽）
     var body = kv([
       ['运行状态', runCell, null],
       ['网关身份', identCell, null],
       ['端口', String(port), null],
       ['网关版本', verCell, null],
-      // 三态：true=一致 / false=读不通或不一致 / null=还读不到，无从判断。
-      // 前两个走绿红，"未知"单独给黄色——它会显示成"异常"的话，
-      // 用户会去改 config.yaml，而实际该做的是先把网关连上。
-      ['配置健康', h('span', { class: 'v' }, [chip(cfgOk === true ? 'OK' : cfgOk === false ? '异常' : '未知',
-          cfgOk === true ? 'ok' : cfgOk === false ? 'bad' : 'warn',
-          cfgOk === true ? 'config.yaml 与 routing-plan.json 一致'
-            : cfgOk === false ? 'config.yaml 读不通，或与路由计划不一致'
-              : '还读不到 config.yaml，一致性无从判断')]),
+      ['配置健康', h('span', { class: 'v' }, [chip(cfgOk === true ? '正常' : cfgOk === false ? '异常' : '未知',
+          cfgOk === true ? 'ok' : cfgOk === false ? 'bad' : 'warn')]),
         null]
     ]);
 
     var sec = section('网关', null, h('div', { class: 'card' }, h('div', { class: 'cardb' }, body)));
     if (!running) {
-      sec.insertBefore(notice('bad', '网关未运行', '状态与计数不可用，来源列表来自本地路由计划。'), sec.lastChild);
+      sec.insertBefore(notice('bad', '网关未运行', ''), sec.lastChild);
     } else if (ident === 'foreign') {
-      sec.insertBefore(notice('warn', '网关身份不符',
-        note || ('端口运行的网关读取了其他配置：' + (conf || '未知路径'))), sec.lastChild);
+      sec.insertBefore(notice('warn', '网关配置来源不一致', note || (conf || '')), sec.lastChild);
     } else if (ident === 'unknown') {
-      sec.insertBefore(notice('warn', '网关身份未核实',
-        (note || '端口运行的网关配置路径无法确认。')), sec.lastChild);
+      sec.insertBefore(notice('warn', '网关身份未核实', note || ''), sec.lastChild);
     } else if (g.version_stale && g.latest) {
-      sec.insertBefore(notice('warn', '网关版本落后：', g.version + ' → ' + g.latest + '，重启网关即可更新。'), sec.lastChild);
+      sec.insertBefore(notice('warn', '网关版本可更新：' + g.version + ' → ' + g.latest, ''), sec.lastChild);
     }
     return sec;
   }
@@ -392,16 +365,10 @@
     if (!sp || typeof sp !== 'object') return null;
     var running = sp.running === true;
     var err = sp.last_error ? String(sp.last_error) : '';
-    var every = dur(sp.interval_sec);
-    var detail;
-    if (err) detail = '采样失败：' + err;
-    else if (!running) detail = '采样线程未运行。';
-    else detail = (every ? every + ' 一次' : '定期采样') +
-      (sp.last_at ? ' · 最近 ' + sp.last_at : '');
+    var detail = err ? ('采样失败：' + err) : (!running ? '未运行' : '');
     return h('div', { class: 'toolbar' }, [
-      
-      chip(err ? '上次失败' : running ? 'RUNNING' : 'STOPPED', err ? 'bad' : running ? 'ok' : 'warn'),
-      h('span', { class: 'hint', text: detail })
+      chip(err ? '异常' : running ? '运行中' : '停止', err ? 'bad' : running ? 'ok' : 'warn'),
+      detail ? h('span', { class: 'hint', text: detail }) : null
     ]);
   }
 

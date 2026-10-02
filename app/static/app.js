@@ -325,9 +325,9 @@
   };
 
   ui.sechead = function (comment, title, hint) {
+    var actualTitle = title || (comment && comment !== '//' ? comment : '');
     return h('div', { class: 'sechead' }, [
-      h('span', { class: 'cmt', text: comment || '//' }),
-      h('span', { class: 'stitle', text: title || '' }),
+      h('span', { class: 'stitle', text: actualTitle }),
       h('span', { class: 'hr' }),
       hint ? h('span', { class: 'hint', text: hint }) : null
     ]);
@@ -1156,6 +1156,12 @@
      而 <script src> 在 file:// 下能正常执行。 */
   function loadPage(name) {
     if (registry[name]) return Promise.resolve(registry[name]);
+    if (window.PrismPages && window.PrismPages[name]) {
+      var pre = window.PrismPages[name];
+      if (typeof pre.mount !== 'function' && typeof pre.render === 'function') pre.mount = pre.render;
+      registry[name] = pre;
+      return Promise.resolve(pre);
+    }
     if (loading[name]) return loading[name];
     var info = pageInfo(name);
     if (!info) return Promise.reject(new Error('未知页面：' + name));
@@ -1237,10 +1243,21 @@
       return;
     }
     runCleanup();
-    clear(view).appendChild(ui.loading('正在加载「' + info.label + '」…'));
     state.page = name;
 
+    // 若模块已在内存就绪，直接挂载，杜绝闪烁与布局抖动；若未就绪，延时 70ms 呈现轻量加载条
+    var isCached = !!(registry[name] || (window.PrismPages && window.PrismPages[name]));
+    var loadTimer = null;
+    if (!isCached) {
+      loadTimer = setTimeout(function () {
+        if (token === mountToken && !current) {
+          clear(view).appendChild(ui.loading('加载中…'));
+        }
+      }, 70);
+    }
+
     loadPage(name).then(function (def) {
+      if (loadTimer) clearTimeout(loadTimer);
       if (token !== mountToken) return;      // 已经切走了，这次加载的结果丢掉
       var cleanup = [];
       var ctx = {
@@ -1382,24 +1399,10 @@
     ]));
     setText(ctl, h('span', { class: 'ok', text: '控制台 :' + (location.port || consolePort()) }));
 
-    var v = g.version ? vtag(g.version) : '版本未知';
-    if (g.latest && g.version_stale) {
-      setText(ver, h('span', null, [v + ' → ', h('span', { class: 'warn', text: vtag(g.latest) }) ]));
-      if (ver) ver.title = '网关版本落后，最新 ' + vtag(g.latest);
-    } else {
-      setText(ver, h('span', { text: v + (g.latest ? '（最新）' : '') }));
-      if (ver) ver.title = g.config_ok === false ? 'config.yaml 读取异常' : '';
-    }
-
-    var r = m.routing || {};
-    var groups = r.selected ? Object.keys(r.selected).length : 0;
-    var srcs = (m.sources || []).length;
-    setText(routeEl, h('span', { text: groups + ' 组 · ' + srcs + ' 来源' }));
-
-    var em = r.exposed_models || [];
-    setText(modelEl, h('span', { title: em.join('\n') }, em.length ? (em.length + ' 模型 · ' + em[0]) : '暂无模型'));
-
-    setText(timeEl, h('span', { title: '最后同步时间', text: clock(Date.now()) }));
+    if (ver) { clear(ver); }
+    if (routeEl) { clear(routeEl); }
+    if (modelEl) { clear(modelEl); }
+    setText(timeEl, h('span', { title: '同步时间', text: clock(Date.now()) }));
   }
 
   function poll() {
@@ -1577,7 +1580,9 @@
         }
       };
     }
-    var onMin = call('minimize'), onMax = call('toggle_maximize'), onClose = call('close');
+    /* 关闭前走脏检查守卫：有未保存修改时先 flushSave / 弹确认，别让配置静默丢失 */
+    var onMin = call('minimize'), onMax = call('toggle_maximize'), rawClose = call('close');
+    var onClose = function () { protectLeave(rawClose); };
     var b;
     if ((b = document.getElementById('wMin'))) b.addEventListener('click', onMin);
     if (btnMax) btnMax.addEventListener('click', onMax);
@@ -1766,6 +1771,14 @@
     }
 
     document.addEventListener('keydown', function (e) {
+      // 0. 弹窗打开时拦截页面导航键（Ctrl+1..5 / Ctrl+, / Ctrl+K / F5），只放行
+      //    Tab 与 Esc 交给弹窗自身的焦点循环与关闭逻辑
+      if (dlgOpen && e.key !== 'Tab' && e.key !== 'Escape' &&
+          ((e.ctrlKey || e.metaKey || e.altKey) || e.key === 'F5' || e.keyCode === 116)) {
+        e.preventDefault();
+        return;
+      }
+
       // 1. Ctrl+K / Cmd+K 命令面板
       if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
         e.preventDefault();

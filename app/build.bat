@@ -13,12 +13,61 @@ if not exist ".venv\Scripts\pyinstaller.exe" (
 )
 
 echo [1/2] 打包中...
-".venv\Scripts\pyinstaller.exe" --noconfirm --onedir --windowed --name Prism ^
+".venv\Scripts\pyinstaller.exe" --noconfirm --clean --onedir --windowed --name Prism ^
   --icon design\icons\prism.ico ^
   --version-file version_info.txt ^
   --add-data "static;static" ^
   --add-data "design\icons;design\icons" ^
+  --exclude-module unittest ^
+  --exclude-module pydoc ^
+  --exclude-module pdb ^
+  --exclude-module doctest ^
+  --exclude-module test ^
+  --exclude-module tkinter ^
+  --exclude-module turtle ^
+  --exclude-module curses ^
+  --exclude-module idlelib ^
+  --exclude-module pydoc_data ^
+  --exclude-module setuptools ^
+  --exclude-module pkg_resources ^
+  --exclude-module multiprocessing ^
+  --exclude-module PIL.ImageTk ^
+  --exclude-module PIL.ImageShow ^
+  --exclude-module PIL.ImageQt ^
   --exclude-module PIL.AvifImagePlugin ^
+  --exclude-module PIL.WebPImagePlugin ^
+  --exclude-module PIL.PdfImagePlugin ^
+  --exclude-module PIL.TiffImagePlugin ^
+  --exclude-module PIL.IptcImagePlugin ^
+  --exclude-module PIL.McIdasImagePlugin ^
+  --exclude-module PIL.MpegImagePlugin ^
+  --exclude-module PIL.FpxImagePlugin ^
+  --exclude-module PIL.DcxImagePlugin ^
+  --exclude-module PIL.BufrStubImagePlugin ^
+  --exclude-module PIL.GribStubImagePlugin ^
+  --exclude-module PIL.Hdf5StubImagePlugin ^
+  --exclude-module PIL.SpiderImagePlugin ^
+  --exclude-module PIL.CurImagePlugin ^
+  --exclude-module PIL.EpsImagePlugin ^
+  --exclude-module PIL.FitsImagePlugin ^
+  --exclude-module PIL.FliImagePlugin ^
+  --exclude-module PIL.GbrImagePlugin ^
+  --exclude-module PIL.IcnsImagePlugin ^
+  --exclude-module PIL.ImImagePlugin ^
+  --exclude-module PIL.ImtImagePlugin ^
+  --exclude-module PIL.MpoImagePlugin ^
+  --exclude-module PIL.PcdImagePlugin ^
+  --exclude-module PIL.PcxImagePlugin ^
+  --exclude-module PIL.PixarImagePlugin ^
+  --exclude-module PIL.PpmImagePlugin ^
+  --exclude-module PIL.PsdImagePlugin ^
+  --exclude-module PIL.SgiImagePlugin ^
+  --exclude-module PIL.SunImagePlugin ^
+  --exclude-module PIL.TgaImagePlugin ^
+  --exclude-module PIL.WmfImagePlugin ^
+  --exclude-module PIL.XbmImagePlugin ^
+  --exclude-module PIL.XpmImagePlugin ^
+  --exclude-module PIL.XVThumbImagePlugin ^
   main.py
 if errorlevel 1 (
   echo [错误] 打包失败
