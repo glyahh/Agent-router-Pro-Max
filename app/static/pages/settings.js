@@ -31,33 +31,33 @@
     {
       id: 'g-debug', scope: 'gateway', key: 'debug', kind: 'bool',
       label: 'Debug 模式',
-      hint: '记录网关内部调试日志'
+      hint: ''
     },
     {
       id: 'g-proxy', scope: 'gateway', key: 'proxy_url', kind: 'text', mono: true,
       placeholder: 'http://127.0.0.1:7897',
       label: '上游代理',
-      hint: '留空表示直连'
+      hint: ''
     },
     {
       id: 'g-retry', scope: 'gateway', key: 'request_retry', kind: 'int', min: 0, max: 99, unit: '次',
       label: '请求重试次数',
-      hint: '0 表示不重试'
+      hint: ''
     },
     {
       id: 'g-reqlog', scope: 'gateway', key: 'request_log', kind: 'bool',
       label: '请求日志',
-      hint: '落盘记录每笔请求内容'
+      hint: ''
     },
     {
       id: 'a-auto', scope: 'app', key: 'autostart', kind: 'bool',
       label: '开机自启',
-      hint: '系统登录后自动启动'
+      hint: ''
     },
     {
       id: 'a-close', scope: 'app', key: 'close_to_tray', kind: 'seg',
       label: '关闭窗口时',
-      hint: '窗口关闭后保持后台运行',
+      hint: '',
       options: [{ v: true, t: '到托盘' }, { v: false, t: '直接退出' }]
     },
     {
@@ -71,14 +71,20 @@
       ]
     },
     {
+      id: 'a-tech-details', scope: 'app', key: 'show_tech_details', kind: 'seg',
+      label: '技术详情',
+      hint: '',
+      options: [{ v: false, t: '隐藏' }, { v: true, t: '显示' }]
+    },
+    {
       id: 'a-interval', scope: 'app', key: 'sample_interval_sec', kind: 'int', min: 10, max: 86400, unit: '秒',
       label: '用量采样间隔',
-      hint: '默认 600 秒'
+      hint: ''
     },
     {
       id: 'a-retention', scope: 'app', key: 'retention_days', kind: 'int', min: 1, max: 3650, unit: '天',
       label: '历史保留上限',
-      hint: '超期采样记录自动清理'
+      hint: ''
     }
   ];
 
@@ -86,27 +92,9 @@
 
   /* ── 小工具 ─────────────────────────────────────────────── */
 
-  function h(tag, attrs, kids) {
-    var el = document.createElement(tag);
-    if (attrs) {
-      for (var k in attrs) {
-        if (!Object.prototype.hasOwnProperty.call(attrs, k)) continue;
-        var v = attrs[k];
-        if (v === null || v === undefined) continue;
-        if (k === 'text') el.textContent = String(v);
-        else if (k === 'class') el.className = v;
-        else if (k.indexOf('on') === 0 && typeof v === 'function') el.addEventListener(k.slice(2), v);
-        else el.setAttribute(k, String(v));
-      }
-    }
-    if (kids) {
-      for (var i = 0; i < kids.length; i++) {
-        if (kids[i] === null || kids[i] === undefined) continue;
-        el.appendChild(typeof kids[i] === 'string' ? document.createTextNode(kids[i]) : kids[i]);
-      }
-    }
-    return el;
-  }
+  // h 用壳的单一实现（app.js），ME-10。本页 `h(tag, attrs, [数组])` 的传法壳的
+  // append 会递归展开数组，行为一致；本页不用 clear。
+  var h = window.Prism.h;
 
   function clock() {
     var d = new Date();
@@ -164,40 +152,39 @@
   /* ── 样式（只加 ps* 前缀的新类，色板全部走 app.css 的变量，不写兜底色）── */
   var CSS = [
     '.ps-set{display:block}',
-    '.ps-set .ps-list{border:1px solid var(--line);border-radius:var(--r-card);background:var(--panel);overflow:hidden}',
+    '.ps-set .ps-list{border:1px solid var(--line);border-radius:var(--r-card);background:var(--panel);overflow:hidden;box-shadow:var(--shadow)}',
     // 列顺序：标签(吃掉剩余空间) | 状态(定宽，免得控件跟着状态文字长度左右跳) | 控件(auto，贴右缘)
-    // 与 buildRow() 里 c.row 的子元素顺序一一对应，改一个就得改另一个。
-    '.ps-set .ps-row{display:grid;grid-template-columns:minmax(0,1fr) 140px auto;gap:18px;align-items:center;padding:15px 18px;border-bottom:1px solid var(--line)}',
+    '.ps-set .ps-row{display:grid;grid-template-columns:minmax(0,1fr) 140px auto;gap:18px;align-items:center;padding:14px 18px;border-bottom:1px solid var(--line);transition:background .12s cubic-bezier(.16,1,.3,1)}',
     '.ps-set .ps-row:last-child{border-bottom:0}',
     '.ps-set .ps-row:hover{background:var(--hover)}',
-    '.ps-set .ps-lbl{font-size:13.5px;color:var(--fg);min-width:0}',
-    '.ps-set .ps-hint{font-size:12px;color:var(--fg3);margin-top:5px;line-height:1.55}',
+    '.ps-set .ps-lbl{font-size:13.5px;font-weight:500;color:var(--fg);min-width:0}',
+    '.ps-set .ps-hint{font-size:12px;color:var(--fg3);margin-top:4px;line-height:1.55}',
     '.ps-set .ps-ctl{justify-self:end;display:flex;align-items:center;gap:10px;min-width:0}',
-    '.ps-set .ps-in{background:var(--panel);border:1px solid var(--line2);color:var(--fg);font-family:inherit;font-size:13.5px;padding:8px 11px;border-radius:var(--r-ctl);outline:none}',
-    '.ps-set .ps-in:focus{border-color:var(--fg3);box-shadow:0 0 0 3px var(--accentdim)}',
+    '.ps-set .ps-in{background:var(--panel);border:1px solid var(--line2);color:var(--fg);font-family:inherit;font-size:13px;padding:8px 11px;border-radius:var(--r-ctl);outline:none;transition:border-color .14s cubic-bezier(.16,1,.3,1),box-shadow .14s cubic-bezier(.16,1,.3,1)}',
+    '.ps-set .ps-in:focus{border-color:var(--fg);box-shadow:0 0 0 1px var(--fg)}',
     '.ps-set .ps-in.bad{border-color:var(--bad)}',
     '.ps-set .ps-in::placeholder{color:var(--fg3)}',
     '.ps-set .ps-in.ps-num{width:90px;text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}',
     '.ps-set .ps-in.ps-url{width:260px;font-family:var(--mono);font-size:12.5px}',
     '.ps-set .ps-unit{font-size:12px;color:var(--fg3)}',
-    '.ps-set .ps-sw{display:inline-flex;align-items:center;gap:9px;cursor:pointer}',
-    '.ps-set .ps-sw input{appearance:none;-webkit-appearance:none;width:36px;height:20px;margin:0;border-radius:var(--r-pill);background:var(--line2);border:1px solid transparent;position:relative;cursor:pointer;transition:background .14s,border-color .14s}',
-    '.ps-set .ps-sw input::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:var(--panel);box-shadow:var(--knob-shadow);transition:transform .14s}',
+    '.ps-set .ps-sw{display:inline-flex;align-items:center;gap:9px;cursor:pointer;user-select:none}',
+    '.ps-set .ps-sw input{appearance:none;-webkit-appearance:none;width:36px;height:20px;margin:0;border-radius:var(--r-pill);background:var(--line2);border:1px solid transparent;position:relative;cursor:pointer;transition:background .16s cubic-bezier(.16,1,.3,1),border-color .16s cubic-bezier(.16,1,.3,1)}',
+    '.ps-set .ps-sw input::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:var(--panel);box-shadow:var(--knob-shadow);transition:transform .16s cubic-bezier(.16,1,.3,1)}',
     '.ps-set .ps-sw input:checked{background:var(--accent);border-color:var(--accent)}',
-    '.ps-set .ps-sw input:checked::after{transform:translateX(16px)}',
-    '.ps-set .ps-sw input:focus-visible{outline:2px solid var(--fg3);outline-offset:2px}',
+    '.ps-set .ps-sw input:checked::after{transform:translateX(16px);background:var(--onaccent)}',
+    '.ps-set .ps-sw input:focus-visible{outline:none;box-shadow:0 0 0 1px var(--fg)}',
     '.ps-set .ps-sw b{font-size:12.5px;font-weight:400;color:var(--fg3);min-width:22px}',
-    '.ps-set .ps-sw input:checked ~ b{color:var(--fg)}',
-    '.ps-set .ps-seg{display:inline-flex;border:1px solid var(--line2);border-radius:var(--r-ctl);overflow:hidden;background:var(--panel2)}',
-    '.ps-set .ps-opt{font-size:12.5px;padding:7px 12px;background:transparent;color:var(--fg2);border:0;border-right:1px solid var(--line2);cursor:pointer}',
+    '.ps-set .ps-sw input:checked ~ b{color:var(--fg);font-weight:500}',
+    '.ps-set .ps-seg{display:inline-flex;border:1px solid var(--line2);border-radius:var(--r-ctl);overflow:hidden;background:var(--panel2);padding:2px;gap:2px}',
+    '.ps-set .ps-opt{font-size:12px;font-weight:500;padding:5px 12px;background:transparent;color:var(--fg2);border:0;border-radius:5px;cursor:pointer;transition:all .14s cubic-bezier(.16,1,.3,1)}',
     '.ps-set .ps-opt:last-child{border-right:0}',
     '.ps-set .ps-opt:hover{color:var(--fg)}',
-    '.ps-set .ps-opt.on{background:var(--panel);color:var(--fg);font-weight:500}',
+    '.ps-set .ps-opt.on{background:var(--panel);color:var(--fg);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.06)}',
     '.ps-set .ps-stat{font-size:12px;color:var(--fg3);text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
     '.ps-set .ps-stat.dirty{color:var(--fg2)}',
     '.ps-set .ps-stat.ok{color:var(--ok)}',
     '.ps-set .ps-stat.err{color:var(--bad)}',
-    '.ps-set .ps-banner{border:1px solid var(--baddim);background:var(--badbg);border-radius:var(--r-card);padding:14px 16px;margin-bottom:18px}',
+    '.ps-set .ps-banner{border:1px solid var(--baddim);background:var(--badbg);border-radius:var(--r-card);padding:14px 16px;margin-bottom:18px;box-shadow:var(--shadow)}',
     '.ps-set .ps-banner .t{font-size:13.5px;font-weight:600;color:var(--bad)}',
     '.ps-set .ps-banner .m{font-size:12.5px;color:var(--fg2);margin-top:6px;line-height:1.6;word-break:break-all}',
     '.ps-set .ps-banner .a{margin-top:12px;display:flex;gap:9px}',
@@ -376,7 +363,7 @@
         else if (bad) tail = bad + ' 项保存失败';
         else if (dirty) tail = dirty + ' 项待保存';
         else if (degradedScope[scope]) tail = '部分项读不到';
-        else tail = '全部已保存';
+        else tail = '';
         host.textContent = tail;
         host.style.color = (bad || loadFailed || loadEmpty) ? 'var(--bad,#EF4444)'
           : (degradedScope[scope] ? 'var(--warn,#EAB308)'
@@ -708,11 +695,7 @@
       });
       return h('div', { class: 'ps-row' }, [
         h('div', {}, [
-          h('div', { class: 'ps-lbl', text: '高级设置' }),
-          h('div', {
-            class: 'ps-hint',
-            text: '网关底层管理面板'
-          })
+          h('div', { class: 'ps-lbl', text: '高级设置' })
         ]),
         h('div', { class: 'ps-ctl' }, [
           h('span', { class: 'ps-unit', text: '127.0.0.1:8317' })

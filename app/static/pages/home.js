@@ -50,15 +50,16 @@
     // 输入控件基线。**必须排除 checkbox**（DEV-RULES A2，踩过一次）
     '.home select,.home input:not([type="checkbox"]),.home textarea{font-family:inherit;',
     '  font-size:13.5px;color:var(--fg);background:var(--panel);border:1px solid var(--line2);',
-    '  border-radius:var(--r-ctl);padding:9px 11px;width:100%;min-width:0}',
+    '  border-radius:var(--r-ctl);padding:8px 11px;width:100%;min-width:0;',
+    '  transition:border-color .14s cubic-bezier(.16,1,.3,1),box-shadow .14s cubic-bezier(.16,1,.3,1)}',
     '.home input:not([type="checkbox"]):focus,.home select:focus,.home textarea:focus{outline:none;',
-    '  border-color:var(--fg3);box-shadow:0 0 0 3px var(--accentdim)}',
+    '  border-color:var(--fg);box-shadow:0 0 0 1px var(--fg)}',
     '.home textarea{resize:vertical;line-height:1.5}',
     '@media (max-width:900px){.home .grid{grid-template-columns:1fr}.home .f.span2,',
     '  .home .f.span3{grid-column:span 1}}',
     '.home .modelrow{grid-template-columns:1.1fr 1.1fr .7fr 2.3fr auto;gap:12px;align-items:start}',
     '@media (max-width:900px){.home .modelrow{grid-template-columns:1fr 1fr}}',
-    '.home .lv{cursor:pointer;user-select:none}',
+    '.home .lv{cursor:pointer;user-select:none;transition:all .14s cubic-bezier(.16,1,.3,1)}',
     '.home .lv.def{box-shadow:inset 0 -2px 0 var(--fg3)}',
     '.home .dfl{display:flex;align-items:center;gap:6px;margin-top:6px;flex-wrap:wrap}',
     '.home .dfl select{width:auto;flex:0 0 auto;padding:5px 22px 5px 9px;font-size:12px}',
@@ -70,7 +71,7 @@
     '.home .empty{font-size:13px;color:var(--fg3);padding:16px 4px;text-align:center}',
     '.home .msg{display:flex;gap:9px;align-items:center;font-size:12.5px;line-height:1.6;',
     '  border:1px solid var(--line2);border-left-width:3px;border-radius:var(--r-ctl);',
-    '  padding:10px 13px;margin-bottom:14px;background:var(--panel)}',
+    '  padding:10px 13px;margin-bottom:14px;background:var(--panel);box-shadow:var(--shadow)}',
     '.home .msg .txt{flex:1;min-width:0}',
     '.home .msg.ok{border-left-color:var(--ok)}',
     '.home .msg.bad{border-left-color:var(--bad);color:var(--bad);background:var(--badbg)}',
@@ -81,7 +82,7 @@
     '  vertical-align:-1px}',
     '@keyframes homespin{to{transform:rotate(360deg)}}',
     // 接入预览的行：等宽给数据（键名/值都是数据）
-    '.home .pv{border:1px solid var(--line);border-radius:var(--r-card);overflow:hidden}',
+    '.home .pv{border:1px solid var(--line);border-radius:var(--r-card);overflow:hidden;box-shadow:var(--shadow)}',
     '.home .pv .r{display:flex;gap:10px;padding:7px 10px;border-top:1px solid var(--line);',
     '  font-family:var(--mono);font-size:11.5px;align-items:baseline}',
     '.home .pv .r:first-child{border-top:0}',
@@ -96,20 +97,23 @@
     '.home .pv .f{color:var(--fg3)}',
     '.home .pv .t{color:var(--fg)}',
     // 全局模型搜索与一键控制工具条
-    '.home .home-global-toolbar{display:flex;align-items:center;gap:12px;margin:0 0 14px 0;padding:10px 14px;background:var(--panel2);border:1px solid var(--line);border-radius:var(--r-card);flex-wrap:wrap}',
+    '.home .home-global-toolbar{display:flex;align-items:center;gap:12px;margin:0 0 14px 0;padding:10px 14px;background:var(--panel2);border:1px solid var(--line);border-radius:var(--r-card);box-shadow:var(--shadow);flex-wrap:wrap}',
     '.home .home-search-box{display:flex;align-items:center;gap:8px;flex:1;min-width:240px;position:relative}',
-    '.home .search-ic{color:var(--line3);display:inline-flex;align-items:center;flex-shrink:0}',
+    '.home .search-ic{color:var(--fg3);display:inline-flex;align-items:center;flex-shrink:0}',
     '.home .search-ic .ui-icon{width:15px;height:15px}',
-    '.home .home-global-filter{background:var(--panel);border:1px solid var(--line2);border-radius:var(--r-ctl);padding:7px 11px;font-size:13px;color:var(--fg);width:100%;outline:none;transition:border-color .15s ease}',
-    '.home .home-global-filter:focus{border-color:var(--fg3);box-shadow:0 0 0 2px var(--accentdim)}',
+    '.home .home-global-filter{background:var(--panel);border:1px solid var(--line2);border-radius:var(--r-ctl);padding:7px 11px;font-size:13px;color:var(--fg);width:100%;outline:none;transition:border-color .14s cubic-bezier(.16,1,.3,1),box-shadow .14s cubic-bezier(.16,1,.3,1)}',
+    '.home .home-global-filter:focus{border-color:var(--fg);box-shadow:0 0 0 1px var(--fg)}',
     '.home .home-filter-badge{font-size:12px;padding:3px 8px;border-radius:var(--r-pill);background:var(--accentdim);color:var(--accent);font-weight:500;white-space:nowrap}',
-    '.home .home-clear-btn{border:none;background:transparent;color:var(--fg3);cursor:pointer;padding:2px 4px;border-radius:4px;display:inline-flex;align-items:center;justify-content:center}',
+    '.home .home-clear-btn{border:none;background:transparent;color:var(--fg3);cursor:pointer;padding:2px 4px;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;transition:all .12s cubic-bezier(.16,1,.3,1)}',
     '.home .home-clear-btn .ui-icon{width:13px;height:13px}',
     '.home .home-clear-btn:hover{color:var(--fg);background:var(--hover)}',
     '.home .home-toolbar-actions{display:flex;align-items:center;gap:8px;flex-shrink:0}',
     '.home .home-tool-btn{white-space:nowrap}',
     '.home .kw-mark{background:var(--accentdim);color:var(--accent);border-radius:2px;padding:0 2px;font-weight:600}',
-    '.home .source-dim{opacity:.45;filter:grayscale(.2)}'
+    '.home .source-dim{opacity:.45;filter:grayscale(.2)}',
+    '.home .graph.hide-tech .lv1 > .grow > .gmeta,',
+    '.home .graph.hide-tech .lv1 > .grow > .gacts,',
+    '.home .graph.hide-tech .lv3 > .grow > .gmeta{display:none!important}'
   ].join('\n');
 
   function injectStyle() {
@@ -128,36 +132,9 @@
   //   · 缺 `data` 分支 → `data:{role:'x'}` 变成属性 `data="[object Object]"`，
   //     按 `[data-role=…]` 的查询永远空集 → 分组"N / M 启用"计数不刷新、跳转高亮静默失效。
   // 长远的修法是页面统一用 ctx.ui.h（见 HANDOFF §6.9 的 ME-10），本轮先把两个分支补齐。
-  function h(tag, attrs) {
-    var e = document.createElement(tag), i, k, v, kids = [];
-    for (i = 2; i < arguments.length; i++) kids.push(arguments[i]);
-    if (attrs) for (k in attrs) {
-      if (!Object.prototype.hasOwnProperty.call(attrs, k)) continue;
-      v = attrs[k];
-      if (v === null || v === undefined || v === false) continue;
-      if (k === 'class') e.className = v;
-      else if (k === 'text') e.textContent = String(v);
-      else if (k === 'style') {
-        if (typeof v === 'string') e.setAttribute('style', v);
-        else for (var s in v) if (v[s] !== null && v[s] !== undefined) e.style[s] = v[s];
-      }
-      else if (k === 'data') { for (var d in v) if (v[d] !== null && v[d] !== undefined) e.dataset[d] = v[d]; }
-      else if (k === 'value') e.value = v;
-      else if (k === 'checked') { if (v) e.checked = true; }
-      else if (k === 'disabled') { if (v) e.disabled = true; }
-      else if (k.slice(0, 2) === 'on' && typeof v === 'function') e.addEventListener(k.slice(2), v);
-      else e.setAttribute(k, v === true ? '' : String(v));
-    }
-    for (i = 0; i < kids.length; i++) append(e, kids[i]);
-    return e;
-  }
-  function append(parent, kid) {
-    if (kid === null || kid === undefined || kid === false) return parent;
-    if (Array.isArray(kid)) { for (var i = 0; i < kid.length; i++) append(parent, kid[i]); return parent; }
-    parent.appendChild(kid instanceof Node ? kid : document.createTextNode(String(kid)));
-    return parent;
-  }
-  function clear(el) { while (el && el.firstChild) el.removeChild(el.firstChild); return el; }
+  // h/clear 用壳的单一实现（app.js）；原先各页一份私有副本，修 bug 不传播（审查 ME-10）。
+  // 壳的 h 是这里的超集：value/checked/disabled 对新建元素语义等效，style 对象/字符串都收。
+  var h = window.Prism.h, clear = window.Prism.clear, append = window.Prism.append;
   function option(value, label) { return h('option', { value: value, text: label }); }
   function spin() { return h('span', { class: 'spin' }); }
   function shortHost(url) {
@@ -213,7 +190,8 @@
     test: {}, testing: {}, confirmDel: null,
     form: null, msg: null, busy: false, loadErr: null,
     agentBusy: null,
-    globalFilter: ''
+    globalFilter: '',
+    showTechDetails: false
   };
   var $tree, $treeHint, $addsrc, $form, $acts, $msgBox, $stickyBar,
       $globalToolbar, $globalFilterInp, $filterBadge, $clearFilterBtn, $unreadableBox;
@@ -302,7 +280,9 @@
   function updateStickyBar() {
     if (!$stickyBar) return;
     var dirty = isDirty();
-    $stickyBar.className = 'home-sticky-bar' + (dirty ? ' dirty' : '');
+    $stickyBar.style.display = dirty ? 'flex' : 'none';
+    if (!dirty) return;
+    $stickyBar.className = 'home-sticky-bar dirty';
 
     var on = 0, i;
     for (i = 0; i < GROUPS.length; i++) on += enabledCount(GROUPS[i].id);
@@ -377,14 +357,6 @@
       }, '测试全部来源'),
       h('span', { class: 'hspacer' })
     ));
-    if (S.state) {
-      var on = 0, i;
-      for (i = 0; i < GROUPS.length; i++) on += enabledCount(GROUPS[i].id);
-      $acts.appendChild(h('div', { class: 'note' },
-        GROUPS.length + ' 组 · ' + providerRows().length + ' 来源 · 已启用 ' + on +
-        ' · 目录里 ' + clientIds().length + ' 个模型 · 配置版本 ' + shortRev(S.state.revision) +
-        (dirty ? ' · 有未保存的改动' : '')));
-    }
     if ($msgBox) $acts.insertBefore($msgBox, $acts.firstChild);
     updateStickyBar();
   }
@@ -465,7 +437,23 @@
       S.open['s:' + provs[j].id] = true;
     }
     saveOpen();
-    renderTree();
+
+    if ($tree) {
+      var nodes = $tree.querySelectorAll('.gnode');
+      for (var k = 0; k < nodes.length; k++) {
+        var el = nodes[k];
+        el.classList.add('open');
+        var grow = el.firstElementChild;
+        if (grow && grow.classList.contains('grow')) {
+          grow.setAttribute('aria-expanded', 'true');
+        }
+        if (typeof el._mountKids === 'function') {
+          el._mountKids();
+        }
+      }
+    } else {
+      renderTree();
+    }
   }
 
   function collapseAllNodes() {
@@ -475,7 +463,20 @@
       }
     }
     saveOpen();
-    renderTree();
+
+    if ($tree) {
+      var openNodes = $tree.querySelectorAll('.gnode.lv2.open, .gnode.lv3.open');
+      for (var i = 0; i < openNodes.length; i++) {
+        var el = openNodes[i];
+        el.classList.remove('open');
+        var grow = el.firstElementChild;
+        if (grow && grow.classList.contains('grow')) {
+          grow.setAttribute('aria-expanded', 'false');
+        }
+      }
+    } else {
+      renderTree();
+    }
   }
 
   function highlightLabel(head, alias, query) {
@@ -500,49 +501,81 @@
     if (!q) {
       if ($filterBadge) $filterBadge.style.display = 'none';
       if ($clearFilterBtn) $clearFilterBtn.style.display = 'none';
-      renderTree();
+      if ($tree) {
+        var allSourceNodes = $tree.querySelectorAll('.gnode.lv3');
+        for (var si = 0; si < allSourceNodes.length; si++) {
+          var sn = allSourceNodes[si];
+          sn.classList.remove('source-dim');
+          var key = sn.dataset.key;
+          var wasOpen = isOpen(key, false);
+          sn.classList.toggle('open', wasOpen);
+          var wrap = sn.querySelector('.model-list-wrap');
+          if (wrap) {
+            var items = wrap.children;
+            for (var ii = 0; ii < items.length; ii++) {
+              items[ii].style.display = '';
+            }
+          }
+        }
+      } else {
+        renderTree();
+      }
       return;
     }
 
     if ($clearFilterBtn) $clearFilterBtn.style.display = '';
 
-    var aId = getActiveAgentId();
     var provs = providerRows();
     var totalMatches = 0;
     var matchedProvs = 0;
 
-    for (var i = 0; i < provs.length; i++) {
-      var p = provs[i];
-      var usable = modelList(p);
-      var pMatches = 0;
-      for (var j = 0; j < usable.length; j++) {
-        var m = usable[j];
-        var fullId = clientId(p.head, m);
-        if (m.toLowerCase().indexOf(q) >= 0 || fullId.toLowerCase().indexOf(q) >= 0 || (p.label && p.label.toLowerCase().indexOf(q) >= 0)) {
-          pMatches++;
+    if ($tree) {
+      for (var i = 0; i < provs.length; i++) {
+        var p = provs[i];
+        var sNode = $tree.querySelector('[data-key="s:' + p.id + '"]');
+        if (!sNode) continue;
+        if (typeof sNode._mountKids === 'function') {
+          sNode._mountKids();
+        }
+        var wrap = sNode.querySelector('.model-list-wrap');
+        var pMatches = 0;
+        var pLabelMatch = p.label && p.label.toLowerCase().indexOf(q) >= 0;
+
+        if (wrap) {
+          var mNodes = wrap.children;
+          for (var j = 0; j < mNodes.length; j++) {
+            var mEl = mNodes[j];
+            var kw = mEl.dataset.kw || '';
+            var matches = pLabelMatch || kw.indexOf(q) >= 0;
+            if (matches) {
+              mEl.style.display = '';
+              pMatches++;
+            } else {
+              mEl.style.display = 'none';
+            }
+          }
+        }
+
+        if (pMatches > 0 || pLabelMatch) {
+          totalMatches += pMatches;
+          matchedProvs++;
+          sNode.classList.remove('source-dim');
+          sNode.classList.add('open');
+          var parentGroup = sNode.closest('.gnode.lv2');
+          if (parentGroup) parentGroup.classList.add('open');
+        } else {
+          sNode.classList.remove('open');
+          sNode.classList.add('source-dim');
         }
       }
-      if (pMatches > 0) {
-        totalMatches += pMatches;
-        matchedProvs++;
-        S.open['s:' + p.id] = true;
-        (S.agents || []).forEach(function (ag) {
-          S.open['a:' + ag.id] = true;
-          S.open['g:' + ag.id + '/' + p.group] = true;
-        });
-        if (aId) {
-          S.open['a:' + aId] = true;
-          S.open['g:' + aId + '/' + p.group] = true;
-        }
-      }
+    } else {
+      renderTree();
     }
 
     if ($filterBadge) {
       $filterBadge.style.display = '';
       $filterBadge.textContent = '匹配 ' + totalMatches + ' 个模型 · ' + matchedProvs + ' 个来源';
     }
-
-    renderTree();
   }
 
   function renderGlobalToolbar() {
@@ -669,6 +702,9 @@
         box.classList.toggle('open', nowOpen);
         row.setAttribute('aria-expanded', nowOpen ? 'true' : 'false');
         setOpen(key, nowOpen);
+        if (nowOpen && typeof opts.onExpand === 'function') {
+          opts.onExpand();
+        }
         updateTreeHint();
       };
       row.addEventListener('click', doToggle);
@@ -688,6 +724,7 @@
 
   function paintTree() {
     if (_unmounted()) return;
+    if ($tree) $tree.classList.toggle('hide-tech', !S.showTechDetails);
     clear($tree);
     if (!S.state) {
       $tree.appendChild(h('div', { class: 'empty' },
@@ -715,9 +752,11 @@
       openAgent = pick || (S.agents[0] && S.agents[0].id);
       if (openAgent) { S.open['a:' + openAgent] = true; saveOpen(); }
     }
+    var frag = document.createDocumentFragment();
     for (i = 0; i < S.agents.length; i++) {
-      $tree.appendChild(agentNode(S.agents[i], S.agents[i].id === openAgent));
+      frag.appendChild(agentNode(S.agents[i], S.agents[i].id === openAgent));
     }
+    $tree.appendChild(frag);
   }
 
   // 树 + 提示行一起刷。提示行依赖 S.state / S.open / 勾选草稿，三者都在这条路径上变。
@@ -725,12 +764,7 @@
     if (_unmounted()) return;
     paintTree();
     if (!$treeHint) return;
-    if (!S.state) { $treeHint.textContent = S.loadErr ? '读取失败' : '读取中…'; return; }
-    var on = 0, i;
-    for (i = 0; i < GROUPS.length; i++) on += enabledCount(GROUPS[i].id);
-    $treeHint.textContent = providerRows().length + ' 来源 · 已启用 ' + on +
-      ' · ' + clientIds().length + ' 个模型在客户端目录里' +
-      (isDirty() ? ' · 有未保存改动' : '');
+    $treeHint.textContent = '';
   }
 
   function agentNode(a, expanded) {
@@ -882,6 +916,40 @@
 
     var testEl = testNote(p.id);
     var kids = [];
+
+    // 本函数原先声明在下面的 else 块里。本文件是 'use strict'（第 31 行），严格模式下
+    // 块内函数声明**不外提**到函数作用域，于是 _mountKids / onExpand 闭包里
+    // `typeof mountModels` 恒为 'undefined' —— 「全部展开」与点来源行都静默挂不出模型行
+    // （并行会话引入懒挂载时踩的，诊断见 HANDOFF §6.13）。挪到函数作用域即修复。
+    function mountModels() {
+      if (modelWrap._mounted || !usable.length) return;
+      modelWrap._mounted = true;
+      var frag = document.createDocumentFragment();
+      usable.forEach(function (alias) {
+        var mEl = modelNode(a, g, p, alias, head, function () {
+          var curExp = (S.draft[p.id] || []).filter(function (x) { return usable.indexOf(x) >= 0; });
+          exposedTag.textContent = curExp.length + ' 暴露';
+          exposedTag.style.display = curExp.length ? '' : 'none';
+          if (summaryNote) {
+            summaryNote.textContent = '已选 ' + curExp.length + ' / ' + usable.length + ' 个模型' +
+              (head ? '（渠道头: ' + head + '）' : '');
+          }
+          updateTreeHint();
+          renderActions();
+        });
+        var fullId = clientId(head, alias);
+        var kwStr = (alias + ' ' + fullId).toLowerCase();
+        mEl.dataset.kw = kwStr;
+        var matchesGlobal = !gq || kwStr.indexOf(gq) >= 0 || (p.label && p.label.toLowerCase().indexOf(gq) >= 0);
+        if (matchesGlobal && gq) hasMatchedModel = true;
+        if (gq && !matchesGlobal) {
+          mEl.style.display = 'none';
+        }
+        modelItems.push({ kw: kwStr, el: mEl });
+        frag.appendChild(mEl);
+      });
+      modelWrap.appendChild(frag);
+    }
     var summaryNote = null;
     if (!usable.length) {
       kids.push(h('div', { class: 'gnote', text: '暂无可勾选模型' }));
@@ -900,46 +968,31 @@
       kids.push(filterBar);
 
       var gq = String(S.globalFilter || '').trim().toLowerCase();
-      var hasMatchedModel = false;
       var modelWrap = h('div', { class: 'model-list-wrap' });
       var modelItems = [];
-      usable.forEach(function (alias) {
-        var mEl = modelNode(a, g, p, alias, head, function () {
-          var curExp = (S.draft[p.id] || []).filter(function (x) { return usable.indexOf(x) >= 0; });
-          exposedTag.textContent = curExp.length + ' 暴露';
-          exposedTag.style.display = curExp.length ? '' : 'none';
-          if (summaryNote) {
-            summaryNote.textContent = '已选 ' + curExp.length + ' / ' + usable.length + ' 个模型' +
-              (head ? '（渠道头: ' + head + '）' : '');
-          }
-          updateTreeHint();
-          renderActions();
-        });
+      var key = 's:' + p.id;
+      var hasMatchedModel = false;
+
+      var initiallyOpen = isOpen(key, false) || (gq && usable.some(function (alias) {
         var fullId = clientId(head, alias);
-        var kwStr = (alias + ' ' + fullId).toLowerCase();
-        var matchesGlobal = !gq || kwStr.indexOf(gq) >= 0 || (p.label && p.label.toLowerCase().indexOf(gq) >= 0);
-        if (matchesGlobal && gq) hasMatchedModel = true;
-        if (gq && !matchesGlobal) {
-          mEl.style.display = 'none';
-        }
-        modelItems.push({ kw: kwStr, el: mEl });
-        modelWrap.appendChild(mEl);
-      });
+        return alias.toLowerCase().indexOf(gq) >= 0 || fullId.toLowerCase().indexOf(gq) >= 0 || (p.label && p.label.toLowerCase().indexOf(gq) >= 0);
+      }));
+
+      if (initiallyOpen) {
+        mountModels();
+      }
 
       var filterDebounceTimer = null;
       filterInp.addEventListener('input', function () {
         if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
         filterDebounceTimer = setTimeout(function () {
+          mountModels();
           var kw = String(filterInp.value || '').trim().toLowerCase();
           for (var mi = 0; mi < modelItems.length; mi++) {
             var item = modelItems[mi];
-            if (!kw || item.kw.indexOf(kw) >= 0) {
-              item.el.style.display = '';
-            } else {
-              item.el.style.display = 'none';
-            }
+            item.el.style.display = (!kw || item.kw.indexOf(kw) >= 0) ? '' : 'none';
           }
-        }, 80);
+        }, 50);
       });
       kids.push(modelWrap);
     }
@@ -957,16 +1010,22 @@
       h('span', { class: 'gmeta', text: shortHost(p.base_url) + (p.tag ? ' · ' + p.tag : '') }),
       h('span', { class: 'gacts' }, sourceButtons(a, p))
     ];
-    var key = 's:' + p.id;
-    var n = node('lv3', key, false, inner, kids, { pinned: S.confirmDel === p.id });
-    // 来源节点的展开：当有全局搜索且有匹配时自动展开；无搜索时读取持久化状态
-    if (gq && hasMatchedModel) {
+    var n = node('lv3', key, false, inner, kids, {
+      pinned: S.confirmDel === p.id,
+      onExpand: function () {
+        if (typeof n._mountKids === 'function') n._mountKids();
+      }
+    });
+
+    n._mountKids = function () {
+      if (typeof mountModels === 'function') mountModels();
+    };
+
+    if (initiallyOpen) {
       n.classList.add('open');
-    } else if (gq && !hasMatchedModel) {
+    } else if (gq) {
       n.classList.remove('open');
       n.classList.add('source-dim');
-    } else if (isOpen(key, false)) {
-      n.classList.add('open');
     }
     return n;
   }
@@ -1224,7 +1283,7 @@
   // ── 测试 ─────────────────────────────────────────────────────────────────
   function runTest(pid) {
     S.testing[pid] = true; renderTree();
-    return api('/api/sources/' + enc(pid) + '/test', { method: 'POST' })
+    return api('/api/sources/' + enc(pid) + '/test', { method: 'POST', timeout: 60000 })
       .then(function (r) { S.test[pid] = r || { ok: false, message: '后端没返回测试结果' }; })
       .catch(function (e) { S.test[pid] = { ok: false, status: e.status || 0, message: errText(e) }; })
       .then(function () {
@@ -1264,7 +1323,7 @@
       }
     }
     S.busy = true; renderActions();
-    api('/api/select', { method: 'POST', body: { revision: S.state.revision, selected: selected, picks: picks } })
+    api('/api/select', { method: 'POST', timeout: 90000, body: { revision: S.state.revision, selected: selected, picks: picks } })
       .then(function (data) {
         applyState(data);
         S.busy = false;
@@ -1306,18 +1365,24 @@
     return Promise.all([
       api('/api/state', { timeout: 30000 }),
       api('/api/sources').catch(function () { return null; }),
-      api('/api/agents').catch(function () { return null; })
+      api('/api/agents').catch(function () { return null; }),
+      api('/api/settings').catch(function () { return null; })
     ]).then(function (rs) {
       // 挂载期间切页 → unmount 会清掉 S.wrap/$tree 并置 S.state=null，而这里的
       // 异步回调没有守卫，会 TypeError 并产生未捕获 rejection（其余四页都有守卫，
       // 首页是唯一的例外 —— 复查轮 5 的 #B）。
       if (!S.wrap) return;
+      var cfg = rs[3];
+      if (cfg && cfg.app && typeof cfg.app.show_tech_details === 'boolean') {
+        S.showTechDetails = cfg.app.show_tech_details;
+        try { localStorage.setItem('prism.show_tech_details', S.showTechDetails ? '1' : '0'); } catch (e) {}
+      }
       applyState(rs[0]);
       if (!S.state) throw new Error('/api/state 返回的不是配置对象');
       S.sources = Array.isArray(rs[1]) ? rs[1] : null;
       S.agents = Array.isArray(rs[2]) ? rs[2] : null;
       S.busy = false; S.loadErr = null;
-      if (showMsg) S.msg = { kind: 'ok', text: '已刷新（配置版本 ' + shortRev(S.state.revision) + '）' };
+      if (showMsg) S.msg = { kind: 'ok', text: '已刷新' };
       renderAll();
     }).catch(function (e) {
       if (!S.wrap) return;                       // 已 unmount：别碰 DOM（同上）
@@ -1520,7 +1585,7 @@
       useSnapshot('使用上次快照的模型列表');
       return;
     }
-    api('/api/sources/preview', { method: 'POST', body: { base_url: f.base_url, api_key: f.api_key || undefined } })
+    api('/api/sources/preview', { method: 'POST', timeout: 60000, body: { base_url: f.base_url, api_key: f.api_key || undefined } })
       .then(function (r) {
         S.busy = false;
         var models = normalizeModels(r);
@@ -1732,6 +1797,11 @@
     S.form = null; S.msg = null; S.test = {}; S.testing = {}; S.confirmDel = null;
     S.loadErr = null; S.agentBusy = null;
     loadOpen();
+    try {
+      S.showTechDetails = localStorage.getItem('prism.show_tech_details') === '1';
+    } catch (e) {
+      S.showTechDetails = false;
+    }
 
     if (ctx && ctx.bus && typeof ctx.bus.on === 'function') {
       if (busUnbind) busUnbind();
@@ -1740,13 +1810,13 @@
 
     var wrap = S.wrap = h('div', { class: 'home' });
 
-    $treeHint = h('span', { class: 'hint', text: '读取中…' });
-    $tree = h('div', { class: 'graph' });
+    $treeHint = h('span', { class: 'hint', text: '' });
+    $tree = h('div', { class: 'graph' + (S.showTechDetails ? '' : ' hide-tech') });
     $tree.appendChild(h('div', { class: 'empty', text: '正在加载路由状态…' }));
     $globalToolbar = renderGlobalToolbar();
     wrap.appendChild($unreadableBox = h('div'));
     wrap.appendChild(h('div', { class: 'sec' },
-      h('div', { class: 'sechead' },
+       h('div', { class: 'sechead' },
         h('span', { class: 'cmt', text: '//' }), h('span', { class: 'stitle', text: '路由' }),
         h('span', { class: 'hr' }), $treeHint),
       $globalToolbar,
@@ -1785,6 +1855,7 @@
     S.test = {}; S.testing = {}; S.form = null; S.msg = null;
     S.busy = false; S.loadErr = null; S.confirmDel = null; S.agentBusy = null;
     S.globalFilter = '';
+    S.showTechDetails = false;
     S.ctx = null;
     return Promise.resolve();
   }

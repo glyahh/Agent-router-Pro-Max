@@ -442,7 +442,8 @@
     var box = h('div', { class: 'statebox' }, [
       h('span', { class: 'ic' }, [ui.icon('empty')]),
       h('span', { class: 't', text: title || '暂无数据' }),
-      detail ? h('span', { class: 'd', html: detail }) : null
+      // detail 按纯文本插，不当 HTML——后端字符串混进 detail 时不会变成标记。
+      detail ? h('span', { class: 'd', text: detail }) : null
     ]);
     if (actions && actions.length) box.appendChild(h('span', { class: 'do' }, actions));
     return box;
@@ -1377,9 +1378,9 @@
     setPort('liveCtlPort', consolePort());
     setText(gw, h('span', null, [
       h('span', { class: 'dot ' + gwLight }),
-      h('span', { class: gwClass, text: ' 网关 ' + gwLabel + ' :' + gwPort })
+      h('span', { class: gwClass, text: ' 网关 :' + gwPort })
     ]));
-    setText(ctl, h('span', { class: 'ok', text: '控制台 在线' + (location.port ? ' :' + location.port : '') }));
+    setText(ctl, h('span', { class: 'ok', text: '控制台 :' + (location.port || consolePort()) }));
 
     var v = g.version ? vtag(g.version) : '版本未知';
     if (g.latest && g.version_stale) {
@@ -1398,7 +1399,7 @@
     var em = r.exposed_models || [];
     setText(modelEl, h('span', { title: em.join('\n') }, em.length ? (em.length + ' 模型 · ' + em[0]) : '暂无模型'));
 
-    setText(timeEl, h('span', { text: '刷新 ' + clock(Date.now()) }));
+    setText(timeEl, h('span', { title: '最后同步时间', text: clock(Date.now()) }));
   }
 
   function poll() {
@@ -1467,17 +1468,113 @@
 
      在浏览器里调试时 window.pywebview 不存在 —— 那时把整组藏起来，其余照跑，
      所以同一份前端在浏览器和 Prism 窗口里都能用。 */
+  /* ══ 7.5 窗口按钮与无边框拖拽/缩放（自绘，替代被摘掉的原生标题栏）═════
+     main.py 的 hide_native_titlebar() 摘掉了 WS_CAPTION，窗口物理区域由客户区全覆盖。
+     窗口拖拽与八方向边缘缩放均基于 Pointer Events 的 setPointerCapture 全局指针捕获，
+     配合原生物理光标追踪与 requestAnimationFrame 帧率节流，跨屏、高 DPI 均完美跟手。 */
+  var _controlsBound = false;
+  var _resizersCreated = false;
+
+  function getWindowApi() {
+    return (window.pywebview && window.pywebview.api) ? window.pywebview.api : null;
+  }
+
+  function ensureResizers() {
+    if (_resizersCreated) return;
+    _resizersCreated = true;
+
+    var RESIZE_EDGES = [
+      { cls: 'r-top', edge: 12, dir: 'top' },
+      { cls: 'r-bottom', edge: 15, dir: 'bottom' },
+      { cls: 'r-left', edge: 10, dir: 'left' },
+      { cls: 'r-right', edge: 11, dir: 'right' },
+      { cls: 'r-tl', edge: 13, dir: 'tl' },
+      { cls: 'r-tr', edge: 14, dir: 'tr' },
+      { cls: 'r-bl', edge: 16, dir: 'bl' },
+      { cls: 'r-br', edge: 17, dir: 'br' }
+    ];
+
+    RESIZE_EDGES.forEach(function (cfg) {
+      var el = document.createElement('div');
+      el.className = 'win-resizer ' + cfg.cls;
+
+      var isResizing = false;
+      var rafPending = false;
+
+      function onPointerMove(ev) {
+        if (!isResizing) return;
+        if (!rafPending) {
+          rafPending = true;
+          requestAnimationFrame(function () {
+            rafPending = false;
+            if (!isResizing) return;
+            var api = getWindowApi();
+            if (api && typeof api.resize_move === 'function') {
+              try { api.resize_move(); } catch (err) {}
+            }
+          });
+        }
+      }
+
+      function onPointerEnd(ev) {
+        if (!isResizing) return;
+        isResizing = false;
+        try { el.releasePointerCapture(ev.pointerId); } catch (err) {}
+        el.removeEventListener('pointermove', onPointerMove);
+        el.removeEventListener('pointerup', onPointerEnd);
+        el.removeEventListener('pointercancel', onPointerEnd);
+        var api = getWindowApi();
+        if (api && typeof api.resize_end === 'function') {
+          try { api.resize_end(); } catch (err) {}
+        }
+      }
+
+      el.addEventListener('pointerdown', function (e) {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+
+        var api = getWindowApi();
+        if (api && typeof api.resize_start === 'function') {
+          try { api.resize_start(cfg.dir); } catch (err) {}
+        } else if (api && typeof api.start_resize === 'function') {
+          try { api.start_resize(cfg.edge); } catch (err) {}
+        }
+
+        isResizing = true;
+        try { el.setPointerCapture(e.pointerId); } catch (err) {}
+        el.addEventListener('pointermove', onPointerMove);
+        el.addEventListener('pointerup', onPointerEnd);
+        el.addEventListener('pointercancel', onPointerEnd);
+      });
+
+      document.body.appendChild(el);
+    });
+  }
+
   function bindWindowControls() {
+    ensureResizers();
+
     var box = document.getElementById('wctl');
     if (!box) return;
-    var api = (window.pywebview && window.pywebview.api) ? window.pywebview.api : null;
-    if (!api) { box.style.display = 'none'; return; }
+    var api = getWindowApi();
+    if (!api) {
+      box.style.display = 'none';
+      return;
+    }
+    box.style.display = '';
+
+    if (_controlsBound) return;
+    _controlsBound = true;
 
     var btnMax = document.getElementById('wMax');
 
     function call(name) {
       return function () {
-        try { api[name](); } catch (e) { if (window.console) console.error('[wctl] ' + name, e); }
+        var a = getWindowApi();
+        if (a && typeof a[name] === 'function') {
+          try { a[name](); } catch (e) { if (window.console) console.error('[wctl] ' + name, e); }
+        }
       };
     }
     var onMin = call('minimize'), onMax = call('toggle_maximize'), onClose = call('close');
@@ -1490,31 +1587,77 @@
        Win+↑ 都会改变它，自己维护一个布尔值必然和真实状态漂移。 */
     function syncMax() {
       if (!btnMax) return;
-      Promise.resolve(api.is_maximized()).then(function (v) {
-        btnMax.classList.toggle('max', !!v);
-        btnMax.title = v ? '还原' : '最大化';
-        btnMax.setAttribute('aria-label', v ? '还原' : '最大化');
+      var a = getWindowApi();
+      if (!a || typeof a.is_maximized !== 'function') return;
+      Promise.resolve(a.is_maximized()).then(function (v) {
+        var isMax = !!v;
+        btnMax.classList.toggle('max', isMax);
+        document.body.classList.toggle('is-maximized', isMax);
+        btnMax.title = isMax ? '还原' : '最大化';
+        btnMax.setAttribute('aria-label', isMax ? '还原' : '最大化');
       }, function () {});
     }
     syncMax();
     window.addEventListener('resize', syncMax);
 
-    /* 按住顶栏空白 = 鼠标拖拽窗口（通过 Win32 WM_NCLBUTTONDOWN 系统级原生接管）。
-       排除 a, button, input, .wctl, .tabs a, #kbdHint 等交互元素。 */
+    /* 按住顶栏空白 = 鼠标拖拽窗口（全局指针捕获 + Win32 绝对物理光标跟踪）。
+       排除 a, button, input, select, textarea, .wctl, .tabs a, #kbdHint 等交互元素。 */
     var top = document.querySelector('.top');
     if (top) {
-      top.addEventListener('mousedown', function (e) {
+      var isDragging = false;
+      var rafPending = false;
+
+      function onDragMove(ev) {
+        if (!isDragging) return;
+        if (!rafPending) {
+          rafPending = true;
+          requestAnimationFrame(function () {
+            rafPending = false;
+            if (!isDragging) return;
+            var a = getWindowApi();
+            if (a && typeof a.drag_move === 'function') {
+              try { a.drag_move(); } catch (err) {}
+            }
+          });
+        }
+      }
+
+      function onDragEnd(ev) {
+        if (!isDragging) return;
+        isDragging = false;
+        try { top.releasePointerCapture(ev.pointerId); } catch (err) {}
+        top.removeEventListener('pointermove', onDragMove);
+        top.removeEventListener('pointerup', onDragEnd);
+        top.removeEventListener('pointercancel', onDragEnd);
+        var a = getWindowApi();
+        if (a && typeof a.drag_end === 'function') {
+          try { a.drag_end(); } catch (err) {}
+        }
+      }
+
+      top.addEventListener('pointerdown', function (e) {
         if (e.button !== 0) return;
         var t = e.target;
-        if (t && t.closest && t.closest('a,button,input,.wctl,.tabs a,#kbdHint')) return;
-        if (api && typeof api.drag === 'function') {
-          try { api.drag(); } catch (err) {}
+        if (t && t.closest && t.closest('a,button,input,select,textarea,.wctl,.tabs a,#kbdHint,.kbd')) return;
+        e.preventDefault();
+
+        var a = getWindowApi();
+        if (a && typeof a.drag_start === 'function') {
+          try { a.drag_start(); } catch (err) {}
+        } else if (a && typeof a.drag === 'function') {
+          try { a.drag(); } catch (err) {}
         }
+
+        isDragging = true;
+        try { top.setPointerCapture(e.pointerId); } catch (err) {}
+        top.addEventListener('pointermove', onDragMove);
+        top.addEventListener('pointerup', onDragEnd);
+        top.addEventListener('pointercancel', onDragEnd);
       });
 
       top.addEventListener('dblclick', function (e) {
         var t = e.target;
-        if (t && t.closest && t.closest('a,button,input,.tabs,.navr,.wctl')) return;
+        if (t && t.closest && t.closest('a,button,input,select,textarea,.tabs,.navr,.wctl')) return;
         onMax();
       });
     }
@@ -1523,6 +1666,7 @@
   /* ══ 8. 启动 ════════════════════════════════════════════════ */
 
   function boot() {
+    ensureResizers();
     var kbd = document.getElementById('kbdHint');
     if (kbd) { kbd.style.cursor = 'default'; kbd.addEventListener('click', openPalette); }
 
@@ -1747,6 +1891,9 @@
     window.Prism.registerPage = registerPage;
     window.Prism.api = api;
     window.Prism.ui = ui;
+    window.Prism.h = h;
+    window.Prism.clear = clear;
+    window.Prism.append = append;
     window.Prism.state = state;
     window.Prism.bus = bus;
     window.Prism.route = route;

@@ -315,10 +315,11 @@
     var valHTML = p === null
       ? '<span class="v na">—</span>'
       : '<span class="v">' + p + '<small>%</small></span>';
+    var wPct = (p === null ? 0 : clampPct(win.used_percent));
     return '<div class="qrow">'
       + '<span class="k" title="' + esc(win.label) + '">' + esc(win.label) + '</span>'
       + '<div class="bar' + (hot || win.limit_reached ? ' hot' : '') + '">'
-      + '<i data-w="' + (p === null ? 0 : clampPct(win.used_percent)) + '"></i></div>'
+      + '<i data-w="' + wPct + '" style="--w:' + wPct + '%"></i></div>'
       + valHTML
       + '</div>';
   }
@@ -347,30 +348,21 @@
     return '<div class="qfoot">' + parts.join('') + '</div>';
   }
 
-  // 后端若给了 quota.note（它更清楚为什么没读数），优先用它当说明
-  function quotaEmptyHTML(availableTrue, note) {
-    if (note) return emptySlotHTML('尚无配额观测', note);
-    return emptySlotHTML('尚无配额观测',
-      availableTrue
-        ? '当前暂无窗口读数，产生请求后自动更新。'
-        : '当前无配额数据，仅官方账号支持配额监测。');
+  function quotaEmptyHTML() {
+    return emptySlotHTML('尚无配额观测', '');
   }
 
   function renderQuota(data) {
     var quota = data && data.quota && typeof data.quota === 'object' ? data.quota : null;
-    var account = quota ? (quota.account || quota.email || '') : '';
-    var plan = quota ? (quota.plan_type || quota.plan || '') : '';
     var windows = quota ? normalizeWindows(quota.windows || quota.signals) : [];
     var models = quota ? normalizeModelQuotas(quota.model_quotas || quota.modelQuotas) : [];
 
     var head = '<div class="sechead"><span class="cmt">//</span>'
-      + '<span class="stitle">配额 · 官方账号</span><span class="hr"></span>'
-      + '<span class="hint">' + esc(shortAccount(account) || '未连接官方账号')
-      + (plan ? ' · ' + esc(plan) : '') + '</span></div>';
+      + '<span class="stitle">配额</span><span class="hr"></span></div>';
 
     if (windows.length === 0 && models.length === 0) {
       return '<div class="sec">' + head
-        + quotaEmptyHTML(quota && quota.available === true, quota ? quota.note : '') + '</div>';
+        + quotaEmptyHTML() + '</div>';
     }
 
     var html = '<div class="sec">' + head;
@@ -508,11 +500,7 @@
     for (i = 0; i < hist.length; i++) { if (!seen[hist[i].date]) { seen[hist[i].date] = 1; days++; } }
 
     var head = '<div class="sechead"><span class="cmt">//</span>'
-      + '<span class="stitle">请求计数 · 按来源</span><span class="hr"></span>'
-      + '<span class="hint">10 分钟粒度'
-      + (merged.length ? ' · 窗口 ' + hours.toFixed(1) + 'h' : '')
-      + (days ? ' · 历史 ' + days + 'd' : '')
-      + '</span></div>';
+      + '<span class="stitle">请求计数 · 按来源</span><span class="hr"></span></div>';
 
     var html = '<div class="sec">' + head;
 
@@ -536,6 +524,7 @@
       // 一根柱子一个桶。尺寸走 CSS 变量，数据属性供 Tooltip 读取
       var okPct = tot ? Math.round(b.success / tot * 100) : 100;
       bars += '<i class="' + (tot ? '' : 's0') + '" data-h="' + hgt + '"'
+        + ' style="--h:' + hgt + '%;' + (tot && b.failed ? '--okpct:' + okPct + '%;' : '') + '"'
         + ' data-time="' + esc(b.time) + '"'
         + ' data-tot="' + tot + '"'
         + ' data-okcnt="' + b.success + '"'
@@ -569,7 +558,6 @@
       + '<span><i class="sw ok"></i>成功 <b>' + totalOK + '</b></span>'
       + '<span><i class="sw bad"></i>失败 <b>' + totalBad + '</b></span>'
       + '<span><i class="sw idle"></i>空闲桶 <b>' + idle + '</b></span>'
-      + '<span class="u-right">窗口内合计 · ' + merged.length + ' 桶 · 全来源</span>'
       + '</div>'
       + (flat ? '<div class="u-note">当前时间窗口内暂无请求数据。</div>' : '')
       + '<div class="chart-wrap">'
@@ -586,8 +574,7 @@
     var counts = normalizeCounts(data && data.counts);
 
     var head = '<div class="sechead"><span class="cmt">//</span>'
-      + '<span class="stitle">来源明细</span><span class="hr"></span>'
-      + '<span class="hint">' + counts.length + ' 来源</span></div>';
+      + '<span class="stitle">来源明细</span><span class="hr"></span></div>';
 
     var html = '<div class="sec">' + head;
     if (!counts.length) {
@@ -708,7 +695,7 @@
           + '<td class="r' + (it2.failed ? ' u-bad' : '') + '">' + it2.failed + '</td>'
           + '<td class="r">' + (tot ? failRate + '%' : '—') + '</td>'
           + '<td><span class="u-mini' + (failRate >= 10 ? ' hot' : '') + '"><i data-w="'
-          + clampPct(Math.round(it2.success / peak * 100)) + '"></i></span></td>'
+          + clampPct(Math.round(it2.success / peak * 100)) + '" style="--w:' + clampPct(Math.round(it2.success / peak * 100)) + '%"></i></span></td>'
           + '</tr>';
       }
       if (names.length > 1) {
@@ -750,7 +737,7 @@
   // 那种情况下只能填内容，不能再套一层 .usage-page。
   function shellInnerHTML() {
     return '<div class="u-toolbar">'
-      + '<span class="pagetag">// 用量</span>'
+      + '<span class="pagetag">用量</span>'
       + '<span class="u-spacer"></span>'
       + '<span class="u-updated" data-role="stamp">尚未取数</span>'
       + '<span class="btn" data-role="refresh">刷新</span>'
@@ -782,6 +769,16 @@
       + '<div class="d">' + esc(msg) + '</div>'
       + '<span class="btn" data-role="retry">重试</span>'
       + '</div></div>';
+  }
+
+  var renderRafId = null;
+  function scheduleRender() {
+    if (state.unmounted) return;
+    if (renderRafId) return;
+    renderRafId = requestAnimationFrame(function () {
+      renderRafId = null;
+      render();
+    });
   }
 
   function render() {
@@ -825,10 +822,8 @@
       var detail = s.getAttribute('data-detail') || '';
       var cui = state.ctx && state.ctx.ui;
       if (cui && typeof cui.empty === 'function') {
-        // ctx.ui.empty 的 detail 是当 HTML 插的（app.js 里 h({html:...})），
-        // 这里统一转义，细节文案里的后端字符串就不会变成标记
         try {
-          var box = cui.empty(title, esc(detail));
+          var box = cui.empty(title, detail);
           // 整页级的 statebox 上下各留 34px。这三处（QUOTA / 请求计数 / 按来源）
           // 是区块内的空态，撑那么高就是一片空白——加个 u-slim 收窄，见 app.css。
           if (box && box.classList) box.classList.add('u-slim');
@@ -845,9 +840,9 @@
      与事实不符，已改正）；用 CSSOM 只是为了少拼字符串、少一次 HTML 解析。 */
   function applySizes() {
     if (!state.bodyEl) return;
-    var i, els = state.bodyEl.querySelectorAll('[data-w]');
+    var i, els = state.bodyEl.querySelectorAll('[data-w]:not([style*="--w"])');
     for (i = 0; i < els.length; i++) els[i].style.setProperty('--w', els[i].getAttribute('data-w') + '%');
-    els = state.bodyEl.querySelectorAll('[data-h]');
+    els = state.bodyEl.querySelectorAll('[data-h]:not([style*="--h"])');
     for (i = 0; i < els.length; i++) {
       els[i].style.setProperty('--h', els[i].getAttribute('data-h') + '%');
       var ok = els[i].getAttribute('data-ok');
@@ -912,7 +907,7 @@
         state.refreshing = false;
         if (btn) { btn.textContent = '刷新'; btn.removeAttribute('disabled'); }
         if (state.unmounted) return;
-        render();
+        scheduleRender();
       });
   }
 
@@ -929,7 +924,7 @@
     var segRole = seg.getAttribute('data-role');
     if (segRole === 'histmode') {
       state.historyMode = v === 'week' ? 'week' : 'day';
-      render();
+      scheduleRender();
     } else if (segRole === 'days') {
       var n = Number(v);
       if (n !== state.days) { state.days = n; refresh(); }
@@ -1065,6 +1060,7 @@
 
     unmount: function () {
       state.unmounted = true;
+      if (renderRafId) { cancelAnimationFrame(renderRafId); renderRafId = null; }
       if (state.timer) { clearInterval(state.timer); state.timer = null; }
       if (state.ticker) { clearInterval(state.ticker); state.ticker = null; }
       if (typeof UsagePage._hideTooltip === 'function') {

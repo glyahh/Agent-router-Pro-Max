@@ -37,31 +37,8 @@
   var FETCH_TIMEOUT_MS = 15000;
 
   /* ── 小工具 ─────────────────────────────────────────────────── */
-  function h(tag, attrs) {
-    var el = document.createElement(tag);
-    var kids = Array.prototype.slice.call(arguments, 2);
-    if (attrs) for (var k in attrs) {
-      var v = attrs[k];
-      if (v === null || v === undefined || v === false) continue;
-      if (k === 'class') el.className = v;
-      else if (k === 'text') el.textContent = String(v);
-      else if (k === 'style') el.setAttribute('style', v);
-      else if (k.slice(0, 2) === 'on') el.addEventListener(k.slice(2).toLowerCase(), v);
-      else el.setAttribute(k, v === true ? '' : String(v));
-    }
-    add(el, kids);
-    return el;
-  }
-  function add(el, kids) {
-    for (var i = 0; i < kids.length; i++) {
-      var c = kids[i];
-      if (c === null || c === undefined || c === false || c === '') continue;
-      if (Array.isArray(c)) { add(el, c); continue; }
-      el.appendChild(c instanceof Node ? c : document.createTextNode(String(c)));
-    }
-    return el;
-  }
-  function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); return el; }
+  // h/clear 用壳的单一实现（app.js），ME-10：私有副本修 bug 不传播。壳为超集。
+  var h = window.Prism.h, clear = window.Prism.clear;
   function clock(d) {
     function p(n) { return (n < 10 ? '0' : '') + n; }
     return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
@@ -266,37 +243,22 @@
     if (atBottom) scrollLogToEnd();
   }
 
+  var filterDebounceTimer = null;
   function toolbar() {
     var input = h('input', {
-      type: 'search', size: 28, placeholder: '搜索日志（支持 /正则/）', value: S.query,
-      oninput: function (e) { S.query = e.target.value; renderBody(); }
-    });
-
-    var segLevels = [
-      { id: 'all', label: '全部' },
-      { id: 'error', label: '仅错误' },
-      { id: 'warn', label: '仅警告' }
-    ];
-    var segWrap = h('span', { class: 'u-seg' });
-    segLevels.forEach(function (lvl) {
-      var item = h('span', {
-        class: S.levelFilter === lvl.id ? 'on' : '',
-        text: lvl.label,
-        onclick: function () {
-          if (S.levelFilter === lvl.id) return;
-          S.levelFilter = lvl.id;
+      type: 'search', size: 28, placeholder: '搜索日志', value: S.query,
+      oninput: function (e) {
+        S.query = e.target.value;
+        if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
+        filterDebounceTimer = setTimeout(function () {
+          filterDebounceTimer = null;
           renderBody();
-          var spans = segWrap.querySelectorAll('span');
-          for (var si = 0; si < spans.length; si++) spans[si].classList.remove('on');
-          item.classList.add('on');
-        }
-      });
-      segWrap.appendChild(item);
+        }, 70);
+      }
     });
 
     var kids = [
       h('span', { class: 'f' }, input),
-      segWrap,
       h('span', { class: 'spacer' }),
       clearButton()
     ];
@@ -352,7 +314,6 @@
   function notes() {
     var box = h('div', { id: 'pm-notes' });
     if (S.queryBad) box.appendChild(notice('bad', '正则语法错误：', S.query + '（' + S.queryBad + '）'));
-    if (S.err) box.appendChild(notice('bad', '日志拉取失败 · ' + S.err, '自动重试中'));
     // 服务端在读主日志时撞到字节上限才置这个标志：这时候给回的行数比要的少，
     // 界面必须说出来，不然用户会把"只有这几行"当成"日志就这么多"。
     if (S.logTruncated) {
@@ -408,9 +369,11 @@
     currentMatchIdx = 0;
     var from = Math.max(0, S.filtered.length - RENDER_MAX);
     var box = h('div', { class: 'logview', id: 'pm-logview' });
+    var frag = document.createDocumentFragment();
     for (var i = from; i < S.filtered.length; i++) {
-      box.appendChild(lineEl(S.filtered[i], i + 1, currentMatches));
+      frag.appendChild(lineEl(S.filtered[i], i + 1, currentMatches));
     }
+    box.appendChild(frag);
 
     box.addEventListener('scroll', function () {
       if (atLogBottom()) {
@@ -485,18 +448,7 @@
   }
 
   function footbar() {
-    var shown = Math.min(S.filtered.length, RENDER_MAX);
-    var kids = [
-      h('span', { class: 'hint', text: '显示 ' + shown + (S.filtered.length > shown ? '/' + S.filtered.length : '') + ' 行' }),
-      h('span', { class: 'hint', text: '缓冲 ' + S.raw.length + ' 行' })
-    ];
-    if (S.hiddenCount) kids.push(h('span', { class: 'hint', text: '已隐藏管理流量 ' + S.hiddenCount + ' 行' }));
-    // 错误行用红色芯片，别指望在文本上加颜色——.hint 没有红色变体（与 CSP 无关：
-    // style-src 有 unsafe-inline，内联样式是允许的，但设计系统不给 .hint 红色变体）
-    if (S.errCount) kids.push(chip('错误/失败行 ' + S.errCount, 'bad'));
-    kids.push(h('span', { class: 'hint', text: '尾部 ' + TAIL + ' 行 · 3s 轮询' }));
-    kids.push(h('span', { class: 'hint', text: S.lastAt ? '更新于 ' + clock(S.lastAt) : '尚未刷新' }));
-    return h('div', { class: 'toolbar', id: 'pm-foot' }, kids);
+    return h('div', { id: 'pm-foot', style: 'display:none;' });
   }
 
   /* ── 错误日志下载 ───────────────────────────────────────────── */
@@ -562,7 +514,7 @@
 
   function errorSection() {
     var extra = button('刷新列表', function () { loadErrorFiles(); }, 'sm');
-    var sec = section('错误日志', '失败请求转储', errorBody(), extra);
+    var sec = section('错误日志', null, errorBody(), extra);
     return sec;
   }
 
@@ -836,6 +788,7 @@
 
   function unmount() {
     document.removeEventListener('keydown', onLogKey);
+    if (filterDebounceTimer) { clearTimeout(filterDebounceTimer); filterDebounceTimer = null; }
     if (S.timer) { clearTimeout(S.timer); S.timer = null; }
     if (S.confirmTimer) { clearTimeout(S.confirmTimer); S.confirmTimer = null; }
     var r = S.root;

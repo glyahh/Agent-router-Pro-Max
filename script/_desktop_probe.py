@@ -228,16 +228,31 @@ PROBE_JS = r"""
         'defaultPrevented=' + ce.defaultPrevented);
 
     /* F11 statebox 实线：**先跳到会渲染空状态的页**再查。
-       （原先没跳转就查，量到的是上一页，得出假失败。） */
+       （原先没跳转就查，量到的是上一页，得出假失败。）
+       夹具有真实数据时 usage 页不渲染空态 —— 2026-10-02 起退化为查 CSSOM 里
+       .statebox 的 border 声明并如实标注，不为它造假空态。 */
     await go('#/usage');
     await sleep(400);
-    if (document.querySelector('.statebox')) {
+    var sb = document.querySelector('.statebox');
+    if (sb) {
       rec('F11', '.statebox 用 1px 实线（不再 dashed）',
           css('.statebox', 'borderTopStyle') === 'solid',
-          'border-top-style=' + css('.statebox', 'borderTopStyle'));
+          'border-top-style=' + css('.statebox', 'borderTopStyle') + '（渲染级）');
     } else {
-      rec('F11', '.statebox 用 1px 实线（不再 dashed）', false,
-          '本页没有渲染出 .statebox（有数据时它是空的），本轮未验到');
+      var ruleHit = false;
+      for (var si = 0; si < document.styleSheets.length && !ruleHit; si++) {
+        var rules;
+        try { rules = document.styleSheets[si].cssRules || []; } catch (e) { continue; }
+        for (var ri = 0; ri < rules.length; ri++) {
+          var r2 = rules[ri];
+          // border 写的是 shorthand + var(--line)，CSSOM 长边属性是空串，只能匹配声明文本
+          if (r2.selectorText && r2.selectorText.indexOf('.statebox') === 0 &&
+              /solid/.test(r2.style.cssText) && /1px/.test(r2.style.cssText) &&
+              !/dashed/.test(r2.style.cssText)) { ruleHit = true; break; }
+        }
+      }
+      rec('F11', '.statebox 用 1px 实线（不再 dashed）', ruleHit,
+          ruleHit ? 'CSSOM 规则 solid（夹具有数据，无空态可渲染，未做渲染级）' : 'CSSOM 里没找到 .statebox solid 规则');
     }
 
     /* F8 快捷键 */

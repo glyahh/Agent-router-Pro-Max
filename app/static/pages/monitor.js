@@ -27,31 +27,8 @@
   var REFRESH_MS = 10000;   // 只有"没有壳"的独立场景才用到
 
   /* ── 小工具 ─────────────────────────────────────────────────── */
-  function h(tag, attrs) {
-    var el = document.createElement(tag);
-    var kids = Array.prototype.slice.call(arguments, 2);
-    if (attrs) for (var k in attrs) {
-      var v = attrs[k];
-      if (v === null || v === undefined || v === false) continue;
-      if (k === 'class') el.className = v;
-      else if (k === 'text') el.textContent = String(v);
-      else if (k === 'style') el.setAttribute('style', v);
-      else if (k.slice(0, 2) === 'on') el.addEventListener(k.slice(2).toLowerCase(), v);
-      else el.setAttribute(k, v === true ? '' : String(v));
-    }
-    add(el, kids);
-    return el;
-  }
-  function add(el, kids) {
-    for (var i = 0; i < kids.length; i++) {
-      var c = kids[i];
-      if (c === null || c === undefined || c === false || c === '') continue;
-      if (Array.isArray(c)) { add(el, c); continue; }
-      el.appendChild(c instanceof Node ? c : document.createTextNode(String(c)));
-    }
-    return el;
-  }
-  function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); return el; }
+  // h/clear 用壳的单一实现（app.js），ME-10：私有副本修 bug 不传播。壳为超集。
+  var h = window.Prism.h, clear = window.Prism.clear;
   // null/undefined 一律显示 —：宁可显示"没有"，也不要编一个 0 出来
   function num(v) { return (v === null || v === undefined || v === '') ? '—' : String(v); }
   function clock(d) {
@@ -264,7 +241,6 @@
     if (S.err) hint = '读取失败';
     else if (S.lastAt) hint = '更新于 ' + clock(S.lastAt);
     else hint = '等待首次数据';
-    hint += S.followed ? ' · 5s 轮询' : ' · ' + Math.round(nextDelay() / 1000) + 's 刷新';
 
     var kids = [
       h('span', { class: 'cmt', text: '//' }),
@@ -378,8 +354,8 @@
     // 圆点直接当 .kv .r 的孩子：.r 是 flex，它才拿得到 6px 的尺寸
     // （app.css 的 .dot 没有 display，放在非 flex 的父级里会缩成 0 宽）
     var body = kv([
-      ['运行状态', runCell, h('span', { class: 'hint', text: runHint })],
-      ['网关身份', identCell, h('span', { class: 'hint', text: identHint })],
+      ['运行状态', runCell, null],
+      ['网关身份', identCell, null],
       ['端口', String(port), null],
       ['网关版本', verCell, null],
       // 三态：true=一致 / false=读不通或不一致 / null=还读不到，无从判断。
@@ -393,7 +369,7 @@
         null]
     ]);
 
-    var sec = section('网关', '127.0.0.1:' + port, h('div', { class: 'card' }, h('div', { class: 'cardb' }, body)));
+    var sec = section('网关', null, h('div', { class: 'card' }, h('div', { class: 'cardb' }, body)));
     if (!running) {
       sec.insertBefore(notice('bad', '网关未运行', '状态与计数不可用，来源列表来自本地路由计划。'), sec.lastChild);
     } else if (ident === 'foreign') {
@@ -461,8 +437,6 @@
     }));
 
     var body = h('div', null, [cols]);
-    var cap = h('div', { class: 'toolbar' }, [h('span', { class: 'hint', text: blind ? '已暴露模型 无法判定' : '已暴露模型 ' + models.length })]);
-    body.appendChild(cap);
     if (!models.length) {
       // 读不到模型列表和"一个模型都没暴露"是两回事，别让盲区显示成空
       body.appendChild(blind
@@ -475,10 +449,8 @@
         return chip(m, '', String(m));
       }).concat(models.length > MAX ? [chip('+' + (models.length - MAX))] : [])));
     }
-    var samp = samplingRow(sampling);
-    if (samp) body.appendChild(samp);
 
-    var sec = section('路由', GROUPS.length + ' 组 · ' + (blind ? '已暴露模型无法判定' : models.length + ' 模型已暴露'), body);
+    var sec = section('路由', null, body);
     // note 是后端自己写的原话，照原样显示，不替它改写
     if (blind && reason) sec.insertBefore(notice('warn', '当前路由无法判定：', reason), sec.lastChild);
     return sec;
@@ -523,10 +495,8 @@
     var empty = statebox('empty', '暂无上游来源',
       '请在首页添加来源。');
 
-    var sec = section('来源', srcs.length + ' 来源',
+    var sec = section('来源', null,
       h('div', null, [
-        notice('accent', '计数为「' + since + '」的进程内累计',
-          '网关重启归零；长期历史见用量页。'),
         table([
           { t: '来源' }, { t: 'ID' }, { t: '类型' }, { t: '启用' },
           { t: '成功', cls: 'r' }, { t: '失败', cls: 'r' },
