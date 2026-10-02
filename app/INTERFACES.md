@@ -165,6 +165,11 @@ app.js 首次读到后存进 sessionStorage（不进历史记录），之后每�
 | `/api/logs` | `clear_logs()` |
 | `/api/sources/{id}` | `sources.delete_source(id)` → `{"deleted": id}` |
 
+### OPTIONS
+
+`do_OPTIONS` 对任意路径回 200 与 `Allow: GET, POST, PUT, DELETE, OPTIONS`，不带 body。
+它是 CORS 预检的最小应答，本服务的同源策略靠 Host/Origin 闸（见 §2），不靠它放行跨源。
+
 `{id}` 段用 `[^/]+` 匹配，不接受斜杠。
 
 ---

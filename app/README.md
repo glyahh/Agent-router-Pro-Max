@@ -278,7 +278,7 @@ D:\MY_DESIGN\Agent-router-Pro-Max\
     └─ .venv\                 开发态虚拟环境
 ```
 
-**出问题怎么恢复：** 网关先 `Pause-Proxy.ps1`，然后用对应那次 `backups\route-switch-*` 里的 `config.yaml` 覆盖回来，再 `Start-Proxy.ps1`。别只原子覆盖文件然后假定网关热加载了——它不一定。客户端回滚是拿 `backups\client-connect-*` 里的 `codex-config.toml` 覆盖 `C:\Users\user\.codex\config.toml`，那次备份的 `auth.json` 没事别乱盖。
+**出问题怎么恢复：** 网关先 `Pause-Proxy.ps1`，然后用对应那次 `backups\route-switch-*` 里的四份文件覆盖回来，再 `Start-Proxy.ps1`。别只原子覆盖文件然后假定网关热加载了——它不一定。`backups\route-switch-config-*` 是选择器自己建的**只含 config.yaml** 的副本，只有配置坏了、别的文件没动时才用它。客户端回滚别指望 `backups\client-connect-*`——`prune_backups` 只留最近 50 个自动备份，它们早被清掉了；**做任何客户端级改动前先自己备份** `C:\Users\user\.codex\config.toml`。
 
 **别上传** `config.yaml`、`.local-secrets.json` 或任何备份目录里的凭据文件。
 
@@ -289,5 +289,5 @@ D:\MY_DESIGN\Agent-router-Pro-Max\
 这份说明对应的是 `app\` 下的 Prism 实现。有三条限制写在这里免得日后误判：
 
 - Prism 依赖 `script\route_selector.py` **存在且内容未变**，用的是文件哈希校验，不匹配就报错。想改那个文件，先看 `docs\adr\0006-*.md`。
-- 打包（PyInstaller `--onedir`）出的 `Prism.exe` 与 `_internal\` 放在项目根，和 `config.yaml` / `script\` / `auth\` 同级。源码态与打包态都实测过六端点与五个页面；托盘回调的线程安全仍是没验的部分。
+- 打包（PyInstaller `--onedir`）出的 `Prism.exe` 与 `_internal\` 放在项目根，和 `config.yaml` / `script\` / `auth\` 同级。源码态与打包态都实测过六端点与五个页面。托盘跨线程：pywebview 的 winforms 后端对 `show`/`destroy` 自带 UI 线程封送（`InvokeRequired`→`Invoke`，已核源码），托盘刷新另有 `_tray_lock` 防并发——2026-10-02 起此前的"线程安全没验"不再是悬案，但真机反复点托盘菜单仍未做过专门验收。
 - **三个运行时文件都落在项目根（打包态则是 exe 旁边），不在 `app\`**：日志 `prism.log`（`main.py` 的 `LOG_PATH` 取 `bridge.ROOT`）、设置 `settings.json`（`server.py` 的 `SETTINGS_PATH` 取 `bridge.ROOT`）、采样库 `usage-history.db`（`core\sampling.py` 自己有 frozen 分支，`RUN_DIR` 取 exe 所在目录）。源码态与打包态的落点一致，因此两种模式读到的是同一份设置与历史。此前这里写过"打包后写进 `_internal\`"——那个说法已经过期，涉及 `APP_DIR` 的四个文件现在都带 frozen 分支。

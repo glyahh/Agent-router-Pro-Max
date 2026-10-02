@@ -12,7 +12,8 @@ Prism 桌面端采用轻量原生前端架构（Vanilla JS + 原生 CSS + 原生
 | 首启引导 | `bridge.ensure_first_run_files()` | 缺 `.local-secrets.json`/`config.yaml` 时生成配对密钥；config 一律读磁盘 secrets；绝不覆盖 |
 | 原子写 | `bridge._atomic_write_json/_atomic_write_text` | replace 前复查存在，并发抢先时放弃返回 False |
 | 保存链渲染探针 | `script/_settings_probe.py` | 真 server 跑在探针进程内 + 服务端断言（CSP 拦跨源回传，见 DEV-RULES B8） |
-| 测试面 | `app/tests/` 8 用例 | HTTP 层 / health 聚合 / 启动路径均已覆盖，`run_all.py` 一条命令 |
+| 测试面 | `app/tests/` 9 用例 | HTTP 层 / health 聚合 / 启动路径 / 窗口控制与拖拽缩放 API 均已覆盖，`run_all.py` 一条命令（用 `app\.venv` 的 Python 跑） |
+| 性能基准 | `app/static/benchmark.html` + `app/tests/run_benchmark.py` | WebView2 真实环境渲染性能基准，`run_benchmark.py` 自动起窗口收集 `__BENCHMARK_RESULTS__` 并输出结构化指标 |
 
 ---
 
