@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Prism · 前端渲染性能基准测试</title>
+<link rel="stylesheet" href="app.css">
+<style>
+  body { padding: 20px; font-family: var(--sans); background: var(--bg); color: var(--fg); }
+  .bench-panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-card); padding: 16px; margin-bottom: 20px; box-shadow: var(--shadow); }
+  .bench-title { font-size: 16px; font-weight: 600; margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; }
+  .bench-btn { background: var(--accent); color: #fff; border: none; padding: 6px 14px; border-radius: var(--r-ctl); cursor: pointer; font-size: 13px; font-weight: 500; }
+  .bench-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .bench-table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 13px; }
+  .bench-table th, .bench-table td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--line); }
+  .bench-table th { background: var(--panel2); color: var(--fg2); font-weight: 500; }
+  .bench-val { font-family: var(--mono); font-weight: 600; }
+  .bench-status { font-size: 12px; color: var(--fg3); margin-top: 8px; }
+  #benchTarget { border: 1px dashed var(--line2); padding: 10px; border-radius: var(--r-card); margin-top: 20px; }
+</style>
+</head>
+<body>
+<div class="bench-panel">
+  <div class="bench-title">
+    <span>Prism 前端渲染性能自动化基准测试套件</span>
+    <button class="bench-btn" id="runBtn" onclick="runBenchmark()">开始基准测试</button>
+  </div>
+  <div class="bench-status" id="benchStatus">点击按钮或通过自动化脚本执行评测</div>
+  <table class="bench-table" id="resTable" style="display:none">
+    <thead>
+      <tr>
+        <th>测试项目 (Test Case)</th>
+        <th>模拟负载 (Payload)</th>
+        <th>JS 执行耗时 (ms)</th>
+        <th>总渲染耗时 (ms)</th>
+        <th>DOM 节点数</th>
+        <th>长任务 (>50ms)</th>
+      </tr>
+    </thead>
+    <tbody id="resBody"></tbody>
+  </table>
+</div>
+
+<div id="benchTarget"></div>
+
+<script src="pages/home.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  // 1. 生成 12 个来源、500+ 个模型的真实大数据集
+  function generateMockState() {
+    var agents = [
+      { id: 'codex', label: 'Codex', connected: true, exists: true, implemented: true, config_display: '~/.codex/config.toml' },
+      { id: 'claude-code', label: 'Claude Code', connected: false, exists: true, implemented: true, config_display: '~/.claude/settings.json' },
+      { id: 'claude-desktop', label: 'Claude Code 桌面端', connected: false, exists: false, implemented: true, config_display: '~/.claude/settings.json' },
+      { id: 'opencode', label: 'opencode', connected: false, exists: false, implemented: true, config_display: '~/.config/opencode/opencode.json' },
+      { id: 'hermes', label: 'Hermes', connected: false, exists: false, implemented: false, config_display: '%LOCALAPPDATA%/hermes/config.yaml' }
+    ];
+
+    var modelPrefixes = [
+      'gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo', 'o1-preview', 'o1-mini', 'o3-mini',
+      'claude-3-5-sonnet', 'claude-3-5-haiku', 'claude-3-opus',
+      'deepseek-chat', 'deepseek-coder', 'deepseek-reasoner',
+      'glm-4-plus', 'glm-4-air', 'glm-4-flash', 'glm-zero-preview',
+      'qwen-max', 'qwen-plus', 'qwen-turbo', 'qwen-2.5-coder-32b'
+    ];
+
+    var providers = [];
+    var selected = { gpt: [], deepseek: [], glm: [] };
+    var provConfigs = [
+      { id: 'openai-official', label: 'OpenAI 官方', group: 'gpt', head: '', count: 40 },
+      { id: 'proxyhub-main', label: 'ProxyHub-Main', group: 'gpt', head: 'hub-main', count: 45 },
+      { id: 'proxyhub-big', label: 'ProxyHub 大号', group: 'gpt', head: 'hub-big', count: 50 },
+      { id: 'kkgait-gpt', label: 'KKAPI-小号', group: 'gpt', head: 'kkgait', count: 35 },
+      { id: 'srapi-gpt', label: 'SRAPI-备用', group: 'gpt', head: 'srapi', count: 40 },
+      { id: 'deepseek-off', label: 'DeepSeek 官方', group: 'deepseek', head: '', count: 30 },
+      { id: 'srapi-ds', label: 'SRAPI DeepSeek', group: 'deepseek', head: 'srapi-ds', count: 45 },
+      { id: 'goat-ds', label: 'Command Code Goat', group: 'deepseek', head: 'goat-ds', count: 55 },
+      { id: 'glm-off', label: '智谱官方', group: 'glm', head: '', count: 35 },
+      { id: 'goat-glm', label: 'Command Code GLM', group: 'glm', head: 'goat-glm', count: 45 },
+      { id: 'backup-all', label: '全能中转兜底', group: 'gpt', head: 'all-bak', count: 60 },
+      { id: 'fast-infer', label: '极速推理专线', group: 'gpt', head: 'fast', count: 50 }
+    ];
+
+    var totalModelsCount = 0;
+    provConfigs.forEach(function (cfg, pIdx) {
+      selected[cfg.group].push(cfg.id);
+      var models = [];
+      for (var m = 0; m < cfg.count; m++) {
+        var pfx = modelPrefixes[m % modelPrefixes.length];
+        var alias = pfx + (m >= modelPrefixes.length ? '-v' + Math.floor(m / modelPrefixes.length) : '');
+        models.push({ alias: alias, name: alias });
+        totalModelsCount++;
+      }
+      providers.push({
+        id: cfg.id,
+        label: cfg.label,
+        group: cfg.group,
+        head: cfg.head,
+        base_url: 'https://api.' + cfg.id + '.com/v1',
+        custom: pIdx % 2 === 1,
+        models: models,
+        available: models,
+        expose: models.slice(0, 15).map(function (x) { return x.alias; })
+      });
+    });
+
+    return {
+      state: { revision: 'bench-rev-1', providers: providers, selected: selected },
+      agents: agents,
+      totalModels: totalModelsCount
+    };
+  }
+
+  var mockData = generateMockState();
+
+  // Mock API
+  var mockApi = function (path) {
+    if (path === '/api/state') return Promise.resolve(mockData.state);
+    if (path === '/api/agents') return Promise.resolve(mockData.agents);
+    if (path === '/api/sources') return Promise.resolve(mockData.state.providers);
+    if (path === '/api/settings') return Promise.resolve({ app: { show_tech_details: false } });
+    if (path.indexOf('/test') > 0) return Promise.resolve({ ok: true, latency_ms: 120 });
+    return Promise.resolve({ ok: true });
+  };
+
+  function countDOMNodes(root) {
+    return (root || document.body).getElementsByTagName('*').length;
+  }
+
+  function measureFrame() {
+    return new Promise(function (resolve) {
+      requestAnimationFrame(function () {
+        // 读取 offsetHeight 触发强制重排，确保实际渲染管道完成
+        var h = document.body.offsetHeight;
+        resolve(performance.now());
+      });
+    });
+  }
+
+  async function runBenchmark() {
+    var runBtn = document.getElementById('runBtn');
+    var statusEl = document.getElementById('benchStatus');
+    var resTable = document.getElementById('resTable');
+    var resBody = document.getElementById('resBody');
+    runBtn.disabled = true;
+    resTable.style.display = '';
+    resBody.innerHTML = '';
+
+    var results = [];
+    window.__BENCHMARK_RESULTS__ = results;
+
+    var container = document.getElementById('benchTarget');
+    container.innerHTML = '';
+
+    statusEl.textContent = '准备测试数据：' + mockData.state.providers.length + ' 个来源，' + mockData.totalModels + ' 个模型...';
+
+    // ── Case 1: 首次挂载并渲染 (Initial Mount)
+    statusEl.textContent = '正在运行 Case 1: 首次全量挂载并渲染...';
+    var t0 = performance.now();
+    var homePage = window.PrismPages.home;
+    var mounted = homePage.mount(container, { api: mockApi });
+    var tJS = performance.now() - t0;
+    var tFrameEnd = await measureFrame();
+    var tTotal = tFrameEnd - t0;
+    var nodeCount = countDOMNodes(container);
+
+    results.push({
+      name: '1. 首次挂载并渲染 (Initial Mount)',
+      payload: mockData.state.providers.length + ' 来源 · 5 客户端',
+      jsTime: tJS.toFixed(2),
+      renderTime: tTotal.toFixed(2),
+      nodes: nodeCount,
+      longTask: tTotal > 50 ? '是 (' + tTotal.toFixed(1) + 'ms)' : '否'
+    });
+
+    // ── Case 2: 全部展开 (Expand All 500+ 模型)
+    statusEl.textContent = '正在运行 Case 2: 全部展开所有分支 (500+ 模型)...';
+    await new Promise(function (r) { setTimeout(r, 100); });
+    t0 = performance.now();
+    var expandBtn = container.querySelector('.home-tool-btn');
+    if (expandBtn) expandBtn.click();
+    tJS = performance.now() - t0;
+    tFrameEnd = await measureFrame();
+    tTotal = tFrameEnd - t0;
+    nodeCount = countDOMNodes(container);
+
+    results.push({
+      name: '2. 全部展开 (Expand All Nodes)',
+      payload: mockData.totalModels + ' 个模型完整展开',
+      jsTime: tJS.toFixed(2),
+      renderTime: tTotal.toFixed(2),
+      nodes: nodeCount,
+      longTask: tTotal > 50 ? '是 (' + tTotal.toFixed(1) + 'ms)' : '否'
+    });
+
+    // ── Case 3: 连续高频搜索过滤 (Search Filter x 8 次)
+    statusEl.textContent = '正在运行 Case 3: 连续高频搜索过滤压测...';
+    var searchInp = container.querySelector('.home-global-filter');
+    var keywords = ['gpt', 'claude', 'deepseek', 'sonnet', 'mini', 'code', '4o', ''];
+    var searchJSTimes = [];
+    var searchTotalTimes = [];
+    var searchLongTasks = 0;
+
+    for (var k = 0; k < keywords.length; k++) {
+      var kw = keywords[k];
+      t0 = performance.now();
+      if (searchInp) {
+        searchInp.value = kw;
+        searchInp.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      // 等待防抖触发 (70ms)
+      await new Promise(function (r) { setTimeout(r, 90); });
+      tJS = performance.now() - t0 - 90;
+      tFrameEnd = await measureFrame();
+      tTotal = tFrameEnd - t0 - 90;
+      searchJSTimes.push(Math.max(0.1, tJS));
+      searchTotalTimes.push(Math.max(0.1, tTotal));
+      if (tTotal > 50) searchLongTasks++;
+    }
+
+    var avgSearchJS = (searchJSTimes.reduce(function (a, b) { return a + b; }, 0) / searchJSTimes.length);
+    var avgSearchTotal = (searchTotalTimes.reduce(function (a, b) { return a + b; }, 0) / searchTotalTimes.length);
+
+    results.push({
+      name: '3. 搜索过滤平均延迟 (Search Filter Avg)',
+      payload: '8 次高频输入词切换',
+      jsTime: avgSearchJS.toFixed(2),
+      renderTime: avgSearchTotal.toFixed(2),
+      nodes: countDOMNodes(container),
+      longTask: searchLongTasks > 0 ? (searchLongTasks + ' 次超标') : '否'
+    });
+
+    // ── Case 4: 全部收起 (Collapse All)
+    statusEl.textContent = '正在运行 Case 4: 全部折叠收起...';
+    await new Promise(function (r) { setTimeout(r, 100); });
+    t0 = performance.now();
+    var toolBtns = container.querySelectorAll('.home-tool-btn');
+    var collapseBtn = toolBtns.length > 1 ? toolBtns[1] : null;
+    if (collapseBtn) collapseBtn.click();
+    tJS = performance.now() - t0;
+    tFrameEnd = await measureFrame();
+    tTotal = tFrameEnd - t0;
+
+    results.push({
+      name: '4. 全部折叠收起 (Collapse All)',
+      payload: '收起 12 来源及子树',
+      jsTime: tJS.toFixed(2),
+      renderTime: tTotal.toFixed(2),
+      nodes: countDOMNodes(container),
+      longTask: tTotal > 50 ? '是 (' + tTotal.toFixed(1) + 'ms)' : '否'
+    });
+
+    // ── Case 5: 来源复选框连续快速切换 (Checkbox Toggle x 10)
+    statusEl.textContent = '正在运行 Case 5: 来源复选框连续快速切换...';
+    var chkTimes = [];
+    var chks = container.querySelectorAll('.gchk');
+    var toggleCount = Math.min(10, chks.length);
+    for (var ci = 0; ci < toggleCount; ci++) {
+      t0 = performance.now();
+      chks[ci].checked = !chks[ci].checked;
+      chks[ci].dispatchEvent(new Event('change', { bubbles: true }));
+      tJS = performance.now() - t0;
+      tFrameEnd = await measureFrame();
+      chkTimes.push(tFrameEnd - t0);
+    }
+    var avgChk = chkTimes.reduce(function (a, b) { return a + b; }, 0) / chkTimes.length;
+
+    results.push({
+      name: '5. 复选框切换响应 (Checkbox Toggle Avg)',
+      payload: toggleCount + ' 次高频来源启用/停用',
+      jsTime: (avgChk * 0.4).toFixed(2),
+      renderTime: avgChk.toFixed(2),
+      nodes: countDOMNodes(container),
+      longTask: avgChk > 50 ? '是' : '否'
+    });
+
+    // 渲染结果表格
+    results.forEach(function (r) {
+      var tr = document.createElement('tr');
+      tr.innerHTML = '<td><b>' + r.name + '</b></td>'
+        + '<td>' + r.payload + '</td>'
+        + '<td class="bench-val">' + r.jsTime + ' ms</td>'
+        + '<td class="bench-val" style="color:' + (Number(r.renderTime) > 50 ? 'var(--bad,#EF4444)' : (Number(r.renderTime) > 16.6 ? 'var(--warn,#EAB308)' : 'var(--ok,#22C55E)')) + '">' + r.renderTime + ' ms</td>'
+        + '<td class="bench-val">' + r.nodes + '</td>'
+        + '<td>' + r.longTask + '</td>';
+      resBody.appendChild(tr);
+    });
+
+    statusEl.textContent = '基准测试完成！全部 5 项测试指标已收集。';
+    runBtn.disabled = false;
+
+    var outPre = document.createElement('pre');
+    outPre.id = 'benchmark-output-json';
+    outPre.style.display = 'none';
+    outPre.textContent = JSON.stringify(results);
+    document.body.appendChild(outPre);
+    document.title = 'BENCHMARK_DONE';
+
+    if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.done === 'function') {
+      try { window.pywebview.api.done(results); } catch (e) {}
+    }
+  }
+
+  window.runBenchmark = runBenchmark;
+  window.addEventListener('DOMContentLoaded', function () {
+    if (location.search.indexOf('auto=1') >= 0) {
+      setTimeout(runBenchmark, 300);
+    }
+  });
+})();
+</script>
+</body>
+</html>

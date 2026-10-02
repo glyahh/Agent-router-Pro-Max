@@ -144,7 +144,7 @@ GATEWAY_KEYS = (
 )
 APP_DEFAULTS = {'autostart': False, 'close_to_tray': True,
                 'sample_interval_sec': 600, 'retention_days': 90,
-                'theme_mode': 'system'}
+                'theme_mode': 'system', 'show_tech_details': False}
 RUN_KEY = r'Software\Microsoft\Windows\CurrentVersion\Run'
 AUTOSTART_NAME = 'Prism'     # 注册表里的值名，与 main.py 约定
 

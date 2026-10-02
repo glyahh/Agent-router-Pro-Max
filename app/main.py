@@ -71,12 +71,32 @@ WS_CAPTION = 0x00C00000
 SWP_NOSIZE = 0x0001
 SWP_NOMOVE = 0x0002
 SWP_NOZORDER = 0x0004
+SWP_NOACTIVATE = 0x0010
 SWP_FRAMECHANGED = 0x0020
 # DWMWA_WINDOW_CORNER_PREFERENCE / DWMWCP_ROUND：摘掉标题栏之后 Win11 不再自动
 # 给圆角（系统只在有原生框架时才画），实测 CORNER_PREFERENCE 保持 0=默认、窗口是直角。
 # 不补这一下，无边框窗口看起来比原生窗口更"旧"。
 DWMWA_WINDOW_CORNER_PREFERENCE = 33
 DWMWCP_ROUND = 2
+
+
+class _RECT(ctypes.Structure):
+    _fields_ = [
+        ('left', ctypes.c_long),
+        ('top', ctypes.c_long),
+        ('right', ctypes.c_long),
+        ('bottom', ctypes.c_long),
+    ]
+
+
+class _POINT(ctypes.Structure):
+    _fields_ = [
+        ('x', ctypes.c_long),
+        ('y', ctypes.c_long),
+    ]
+
+
+_CACHED_HWND = None
 
 
 def _own_hwnd(retries: int = 20):
@@ -89,7 +109,15 @@ def _own_hwnd(retries: int = 20):
 
     窗口是异步创建的，start() 的回调里未必已经存在，所以重试。
     """
+    global _CACHED_HWND
     user32 = ctypes.windll.user32
+    if _CACHED_HWND:
+        try:
+            if user32.IsWindow(wintypes.HWND(_CACHED_HWND)):
+                return _CACHED_HWND
+        except Exception:
+            _CACHED_HWND = None
+
     user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
     user32.FindWindowW.restype = wintypes.HWND
     user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
@@ -103,6 +131,7 @@ def _own_hwnd(retries: int = 20):
     for _ in range(max(1, retries)):
         hwnd = user32.FindWindowW(None, TITLE)
         if hwnd:
+            _CACHED_HWND = hwnd
             return hwnd
         found = []
 
@@ -118,21 +147,42 @@ def _own_hwnd(retries: int = 20):
         except Exception:
             found = []
         if found:
+            _CACHED_HWND = found[0]
             return found[0]
         time.sleep(0.1)
     return None
 
 
+_SUBCLASS_WNDPROC = None
+_OLD_WNDPROC = None
+
+
+def _window_subclass_proc(hwnd, msg, wparam, lparam):
+    global _OLD_WNDPROC
+    # ponytail: 拦截 WM_NCCALCSIZE (0x0083)。
+    # 当窗口加回 WS_THICKFRAME 时，系统默认计算会在顶部留出非客户区边框，
+    # 在系统深色模式下 DWM 将其渲染为 4px 深色横条（"黑条"）。
+    # 当 wparam 为 1 (TRUE) 时返回 0，强制令客户区覆盖整个窗口物理区域。
+    if msg == 0x0083 and wparam == 1:
+        return 0
+    return ctypes.windll.user32.CallWindowProcW(_OLD_WNDPROC, hwnd, msg, wparam, lparam)
+
+
 def hide_native_titlebar(window=None) -> None:
-    """frameless 窗口上恢复系统边缘缩放与 DWM 圆角。
+    """frameless 窗口上恢复系统边缘缩放与 DWM 圆角，彻底消除顶部黑条。
 
-    create_window 已传 frameless=True（FormBorderStyle=None），配合 winforms.py
-    的 WndProc 拦截 WM_NCCALCSIZE，客户区覆盖整个窗口——系统深色模式下 DWM
-    渲染残留非客户区为深色的"黑条"因此不再出现。
-
-    这里加回 WS_THICKFRAME 等让边缘缩放、Snap 贴边、系统菜单恢复。
-    WM_NCCALCSIZE 被拦截后 WS_THICKFRAME 只提供边缘热区，不分配非客户区空间。
+    create_window 传 frameless=True（FormBorderStyle=None），初始无非客户区。
+    在此通过 Win32 SetWindowLongPtrW 子类化窗口过程，拦截 WM_NCCALCSIZE 返回 0。
+    然后再加回 WS_THICKFRAME/WS_SYSMENU/WS_MINIMIZEBOX/WS_MAXIMIZEBOX。
+    这样窗口既拥有完整的系统边缘拖拽缩放与 Win+方向键贴边能力，
+    客户区又 100% 满铺窗口物理矩形，绝不产生顶部深色/黑色非客户区横条。
     """
+    global _SUBCLASS_WNDPROC, _OLD_WNDPROC, _CACHED_HWND
+    if window is not None and hasattr(window, 'native') and hasattr(window.native, 'Handle'):
+        try:
+            _CACHED_HWND = window.native.Handle.ToInt64()
+        except Exception:
+            pass
     if window is not None and hasattr(window, 'events') and hasattr(window.events, 'shown'):
         try:
             window.events.shown.wait(timeout=2.0)
@@ -142,6 +192,7 @@ def hide_native_titlebar(window=None) -> None:
     if not hwnd:
         log('恢复边缘缩放：没找到窗口句柄，跳过')
         return
+    _CACHED_HWND = hwnd
     try:
         user32 = ctypes.windll.user32
         user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
@@ -151,7 +202,21 @@ def hide_native_titlebar(window=None) -> None:
         user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint]
         user32.SetWindowPos.restype = wintypes.BOOL
 
-        # 加回系统级窗口功能（frameless=True 时 WinForms 全部清掉了）
+        # 1. 注册 Win32 子类化过程（持久保存在全局变量防止被 GC 回收引发崩溃）
+        GWLP_WNDPROC = -4
+        WNDPROC_TYPE = ctypes.WINFUNCTYPE(ctypes.c_int64, wintypes.HWND, ctypes.c_uint, wintypes.WPARAM, wintypes.LPARAM)
+        _SUBCLASS_WNDPROC = WNDPROC_TYPE(_window_subclass_proc)
+        
+        SetWindowLongPtr = user32.SetWindowLongPtrW
+        SetWindowLongPtr.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_void_p]
+        SetWindowLongPtr.restype = ctypes.c_void_p
+        
+        user32.CallWindowProcW.argtypes = [ctypes.c_void_p, wintypes.HWND, ctypes.c_uint, wintypes.WPARAM, wintypes.LPARAM]
+        user32.CallWindowProcW.restype = ctypes.c_int64
+        
+        _OLD_WNDPROC = SetWindowLongPtr(wintypes.HWND(hwnd), GWLP_WNDPROC, ctypes.cast(_SUBCLASS_WNDPROC, ctypes.c_void_p))
+
+        # 2. 加回系统级窗口功能（frameless=True 时 WinForms 清理了这些样式）
         WS_THICKFRAME  = 0x00040000
         WS_SYSMENU     = 0x00080000
         WS_MINIMIZEBOX = 0x00020000
@@ -160,11 +225,11 @@ def hide_native_titlebar(window=None) -> None:
         style |= WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX
         user32.SetWindowLongW(wintypes.HWND(hwnd), GWL_STYLE, style)
 
-        # SWP_FRAMECHANGED 让系统重算（WM_NCCALCSIZE 被 WndProc 拦截，不会分配非客户区）
+        # 3. SWP_FRAMECHANGED 触发系统重新计算窗口框架（WM_NCCALCSIZE 将被拦截并返回 0）
         user32.SetWindowPos(wintypes.HWND(hwnd), None, 0, 0, 0, 0,
                             SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER)
 
-        # DWM 圆角
+        # 4. DWM 圆角与主题
         try:
             ctypes.windll.dwmapi.DwmSetWindowAttribute(
                 wintypes.HWND(hwnd), ctypes.c_uint(DWMWA_WINDOW_CORNER_PREFERENCE),
@@ -172,7 +237,6 @@ def hide_native_titlebar(window=None) -> None:
         except Exception:
             log('设圆角失败（不致命）：\n' + traceback.format_exc())
 
-        # DWM 主题跟 APP 有效主题走（而非系统主题），避免深色阴影与浅色内容不搭
         try:
             is_dark = (server.effective_theme() == 'dark')
             ctypes.windll.dwmapi.DwmSetWindowAttribute(
@@ -181,7 +245,7 @@ def hide_native_titlebar(window=None) -> None:
         except Exception:
             pass
 
-        log('frameless 窗口已恢复 WS_THICKFRAME（边缘缩放/Snap）与 DWM 圆角')
+        log('frameless 窗口已成功子类化并恢复 WS_THICKFRAME（边缘缩放/Snap，零非客户区）')
     except Exception:
         log('恢复边缘缩放失败：\n' + traceback.format_exc())
 
@@ -204,7 +268,33 @@ def make_window_api(shell):
     遍历实例时看不到它。这个写法看着绕，但它是这里唯一安全的形式。
     """
 
+    def _get_hwnd():
+        if shell.window is not None:
+            native = getattr(shell.window, 'native', None)
+            if native is not None and hasattr(native, 'Handle'):
+                handle = getattr(native, 'Handle', None)
+                if hasattr(handle, 'ToInt64'):
+                    try:
+                        val = handle.ToInt64()
+                        if isinstance(val, int) and val > 0:
+                            return val
+                    except Exception:
+                        pass
+                elif isinstance(handle, int) and handle > 0:
+                    return handle
+        return _own_hwnd(retries=1)
+
     class _WindowApi:
+        def __init__(self):
+            self._drag_start_cursor = (0, 0)
+            self._drag_start_pos = (0, 0)
+            self._is_dragging = False
+
+            self._resize_start_cursor = (0, 0)
+            self._resize_start_rect = (0, 0, 0, 0)
+            self._resize_direction = ''
+            self._is_resizing = False
+
         def minimize(self) -> None:
             """最小化。"""
             try:
@@ -217,7 +307,7 @@ def make_window_api(shell):
 
             双击顶栏、拖到屏幕边缘贴边、Win+↑ 都能改变最大化状态，自己记必然漂移。
             """
-            hwnd = _own_hwnd(retries=1)
+            hwnd = _get_hwnd()
             try:
                 return bool(hwnd and ctypes.windll.user32.IsZoomed(wintypes.HWND(hwnd)))
             except Exception:
@@ -234,19 +324,202 @@ def make_window_api(shell):
                 log('最大化/还原失败：\n' + traceback.format_exc())
 
         def drag(self) -> None:
-            """自绘标题栏原生系统拖动。
+            """自绘标题栏原生系统拖动兼容入口。"""
+            self.start_resize(2)
 
-            通过 Win32 WM_NCLBUTTONDOWN + HTCAPTION 将鼠标拖拽直接交由系统内核处理，
-            实现零延迟、支持 Snap 贴边半屏与最大化手势的绝对原生拖拽手感。
+        def start_resize(self, edge: int = 2) -> None:
+            """自绘无边框窗口边缘缩放与拖拽原生尝试。
+
+            edge 对应 Win32 Hit-Test 代码：
+              2:  HTCAPTION (标题栏拖拽)
+              10: HTLEFT (左边缘)
+              11: HTRIGHT (右边缘)
+              12: HTTOP (上边缘)
+              15: HTBOTTOM (下边缘)
+              13: HTTOPLEFT (左上角)
+              14: HTTOPRIGHT (右上角)
+              16: HTBOTTOMLEFT (左下角)
+              17: HTBOTTOMRIGHT (右下角)
             """
-            hwnd = _own_hwnd(retries=1)
+            hwnd = _get_hwnd()
             if hwnd:
                 try:
                     user32 = ctypes.windll.user32
                     user32.ReleaseCapture()
-                    user32.SendMessageW(wintypes.HWND(hwnd), 0x00A1, 2, 0)
+                    pt = _POINT()
+                    user32.GetCursorPos(ctypes.byref(pt))
+                    lparam = (pt.y << 16) | (pt.x & 0xFFFF)
+                    user32.SendMessageW(wintypes.HWND(hwnd), 0x00A1, int(edge), lparam)
                 except Exception:
                     pass
+
+        def drag_start(self) -> bool:
+            """记录拖拽初始光标物理坐标与窗口物理位置。"""
+            hwnd = _get_hwnd()
+            if not hwnd:
+                return False
+            try:
+                user32 = ctypes.windll.user32
+                r = _RECT()
+                user32.GetWindowRect(wintypes.HWND(hwnd), ctypes.byref(r))
+                pt = _POINT()
+                user32.GetCursorPos(ctypes.byref(pt))
+                self._drag_start_pos = (r.left, r.top)
+                self._drag_start_cursor = (pt.x, pt.y)
+                self._is_dragging = True
+                return True
+            except Exception:
+                return False
+
+        def drag_move(self) -> None:
+            """基于当前系统物理光标的绝对位移更新窗口位置（零累积误差、零漂移）。"""
+            if not self._is_dragging:
+                return
+            hwnd = _get_hwnd()
+            if not hwnd:
+                return
+            try:
+                user32 = ctypes.windll.user32
+                pt = _POINT()
+                user32.GetCursorPos(ctypes.byref(pt))
+                dx = pt.x - self._drag_start_cursor[0]
+                dy = pt.y - self._drag_start_cursor[1]
+                new_x = self._drag_start_pos[0] + dx
+                new_y = self._drag_start_pos[1] + dy
+                user32.SetWindowPos(wintypes.HWND(hwnd), None,
+                                    new_x, new_y, 0, 0,
+                                    SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE)
+            except Exception:
+                pass
+
+        def drag_end(self) -> None:
+            """释放拖拽状态。"""
+            self._is_dragging = False
+
+        def resize_start(self, direction: str) -> bool:
+            """记录缩放初始光标物理坐标与窗口物理矩形。"""
+            hwnd = _get_hwnd()
+            if not hwnd:
+                return False
+            try:
+                user32 = ctypes.windll.user32
+                r = _RECT()
+                user32.GetWindowRect(wintypes.HWND(hwnd), ctypes.byref(r))
+                pt = _POINT()
+                user32.GetCursorPos(ctypes.byref(pt))
+                self._resize_start_rect = (r.left, r.top, r.right - r.left, r.bottom - r.top)
+                self._resize_start_cursor = (pt.x, pt.y)
+                self._resize_direction = str(direction).lower()
+                self._is_resizing = True
+                return True
+            except Exception:
+                return False
+
+        def resize_move(self) -> None:
+            """基于当前系统物理光标绝对位移的八方向平滑缩放，内建最小尺寸保护。"""
+            if not self._is_resizing:
+                return
+            hwnd = _get_hwnd()
+            if not hwnd:
+                return
+            try:
+                user32 = ctypes.windll.user32
+                pt = _POINT()
+                user32.GetCursorPos(ctypes.byref(pt))
+                dx = pt.x - self._resize_start_cursor[0]
+                dy = pt.y - self._resize_start_cursor[1]
+
+                left, top, w, h = self._resize_start_rect
+                min_w, min_h = 900, 620
+                d = self._resize_direction
+                has_left = ('left' in d) or (d in ('l', 'tl', 'bl'))
+                has_right = ('right' in d) or (d in ('r', 'tr', 'br'))
+                has_top = ('top' in d) or (d in ('t', 'tl', 'tr'))
+                has_bottom = ('bottom' in d) or (d in ('b', 'bl', 'br'))
+
+                if has_left:
+                    nw = max(min_w, w - dx)
+                    left += (w - nw)
+                    w = nw
+                elif has_right:
+                    w = max(min_w, w + dx)
+
+                if has_top:
+                    nh = max(min_h, h - dy)
+                    top += (h - nh)
+                    h = nh
+                elif has_bottom:
+                    h = max(min_h, h + dy)
+
+                user32.SetWindowPos(wintypes.HWND(hwnd), None,
+                                    left, top, w, h,
+                                    SWP_NOZORDER | SWP_NOACTIVATE)
+            except Exception:
+                pass
+
+        def resize_end(self) -> None:
+            """释放缩放状态。"""
+            self._is_resizing = False
+
+        def move_by(self, dx: int, dy: int) -> None:
+            """平滑移动窗口（用于 WebView2 阻断原生消息时的精准拖拽跟随兼容）。"""
+            hwnd = _get_hwnd()
+            if not hwnd:
+                return
+            try:
+                user32 = ctypes.windll.user32
+                r = _RECT()
+                user32.GetWindowRect(wintypes.HWND(hwnd), ctypes.byref(r))
+                user32.SetWindowPos(wintypes.HWND(hwnd), None,
+                                    r.left + int(dx), r.top + int(dy), 0, 0,
+                                    SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE)
+            except Exception:
+                pass
+
+        def resize_by(self, direction: str, dx: int, dy: int) -> None:
+            """八方向平滑边缘缩放，内建最小尺寸保护（兼容）。"""
+            hwnd = _get_hwnd()
+            if not hwnd:
+                return
+            try:
+                user32 = ctypes.windll.user32
+                r = _RECT()
+                user32.GetWindowRect(wintypes.HWND(hwnd), ctypes.byref(r))
+                left = r.left
+                top = r.top
+                w = r.right - r.left
+                h = r.bottom - r.top
+
+                dx = int(dx)
+                dy = int(dy)
+                min_w = 900
+                min_h = 620
+
+                d = str(direction).lower().strip()
+                has_left = ('left' in d) or (d in ('l', 'tl', 'bl'))
+                has_right = ('right' in d) or (d in ('r', 'tr', 'br'))
+                has_top = ('top' in d) or (d in ('t', 'tl', 'tr'))
+                has_bottom = ('bottom' in d) or (d in ('b', 'bl', 'br'))
+
+                if has_left:
+                    nw = max(min_w, w - dx)
+                    left += (w - nw)
+                    w = nw
+                elif has_right:
+                    w = max(min_w, w + dx)
+
+                if has_top:
+                    nh = max(min_h, h - dy)
+                    top += (h - nh)
+                    h = nh
+                elif has_bottom:
+                    h = max(min_h, h + dy)
+
+                user32.SetWindowPos(wintypes.HWND(hwnd), None,
+                                    left, top, w, h,
+                                    SWP_NOZORDER | SWP_NOACTIVATE)
+            except Exception:
+                pass
 
         def close(self) -> None:
             """走和点原生 X 完全同一条路径（close_to_tray 时收到托盘）。"""
@@ -662,6 +935,7 @@ class Shell:
         self.httpd = None
         self.quitting = threading.Event()
         self._tray_thread = None
+        self._tray_lock = threading.Lock()  # refresh_tray 会被状态循环与托盘回调两个线程调
         self._last_state = None
         self._tip_text = None       # 上一次算出的悬浮提示，配合 _tip_at 做节流
         self._tip_at = 0.0
@@ -777,14 +1051,15 @@ class Shell:
         if icon is None:
             return
         try:
-            if state != self._last_state:
-                self._last_state = state
-                icon.icon = tray_image(state)
-            # tip 里的今日计数与当前路由比颜色贵（一次 SQLite + 一次网关 GET），
-            # tray_tip() 自己按 TRAY_TIP_INTERVAL 节流，这里每次调都行
-            tip = self.tray_tip()
-            if tip != icon.title:
-                icon.title = tip
+            with self._tray_lock:
+                if state != self._last_state:
+                    self._last_state = state
+                    icon.icon = tray_image(state)
+                # tip 里的今日计数与当前路由比颜色贵（一次 SQLite + 一次网关 GET），
+                # tray_tip() 自己按 TRAY_TIP_INTERVAL 节流，这里每次调都行
+                tip = self.tray_tip()
+                if tip != icon.title:
+                    icon.title = tip
         except Exception:
             log('更新托盘图标失败：\n' + traceback.format_exc())
 
@@ -1045,13 +1320,9 @@ def run(console_port: int = DEFAULT_CONSOLE_PORT, open_window: bool = True) -> i
                 log('停止控制台服务失败：\n' + traceback.format_exc())
         return 0
 
-    # 拖动区域：只有"直接命中 .pywebview-drag-region"的元素才能拖窗口。
-    # DIRECT_TARGET_ONLY 必须为 True —— pywebview 的另一个模式（False）是从 target
-    # 往上遍历 DOM，那样点在顶栏里的任何按钮上都会顺带触发拖动（customize.js:69-87）。
-    # 代价是拖动区只认自己带类的元素，所以 index.html 里给 nav / brand / 中间的
-    # 填空块三个地方都加了类，顶栏的大部分空白因此都能拖。
-    webview.settings['DRAG_REGION_SELECTOR'] = '.pywebview-drag-region'
-    webview.settings['DRAG_REGION_DIRECT_TARGET_ONLY'] = True
+    # 拖拽全部走 app.js 绑定的原生 Win32 WM_NCLBUTTONDOWN (HTCAPTION)，
+    # 禁用 pywebview 内置的 JS 轮询坐标伪拖拽，手感顺滑且完美支持 Windows Snap。
+    webview.settings['DRAG_REGION_SELECTOR'] = '.none-pywebview-drag'
 
     # 令牌拼在窗口 URL 上（?t=）：app.js 首次读到就存 sessionStorage，请求全程带头。
     # 回环口上的 URL 不出本机；令牌只走这一条路，不打日志、不进环境变量。
