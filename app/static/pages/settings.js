@@ -77,7 +77,7 @@
       options: [{ v: false, t: '隐藏' }, { v: true, t: '显示' }]
     },
     {
-      id: 'a-interval', scope: 'app', key: 'sample_interval_sec', kind: 'int', min: 10, max: 86400, unit: '秒',
+      id: 'a-interval', scope: 'app', key: 'sample_interval_sec', kind: 'int', min: 30, max: 86400, unit: '秒',
       label: '用量采样间隔',
       hint: ''
     },
@@ -164,17 +164,18 @@
     '.ps-set .ps-in:focus{border-color:var(--fg);box-shadow:0 0 0 1px var(--fg)}',
     '.ps-set .ps-in.bad{border-color:var(--bad)}',
     '.ps-set .ps-in::placeholder{color:var(--fg3)}',
+    '.ps-set .ps-num-wrap{position:relative;display:inline-flex;align-items:center}',
+    '.ps-set .ps-num-wrap .ps-in.ps-num{width:110px;padding-right:30px;text-align:right}',
     '.ps-set .ps-in.ps-num{width:90px;text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}',
     '.ps-set .ps-in.ps-url{width:260px;font-family:var(--mono);font-size:12.5px}',
-    '.ps-set .ps-unit{font-size:12px;color:var(--fg3)}',
-    '.ps-set .ps-sw{display:inline-flex;align-items:center;gap:9px;cursor:pointer;user-select:none}',
-    '.ps-set .ps-sw input{appearance:none;-webkit-appearance:none;width:36px;height:20px;margin:0;border-radius:var(--r-pill);background:var(--line2);border:1px solid transparent;position:relative;cursor:pointer;transition:background .16s cubic-bezier(.16,1,.3,1),border-color .16s cubic-bezier(.16,1,.3,1)}',
-    '.ps-set .ps-sw input::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:var(--panel);box-shadow:var(--knob-shadow);transition:transform .16s cubic-bezier(.16,1,.3,1)}',
+    '.ps-set .ps-unit{position:absolute;right:11px;font-size:12px;color:var(--fg3);pointer-events:none;user-select:none}',
+    '.ps-set .ps-sw{display:inline-flex;align-items:center;cursor:pointer;user-select:none;margin:0}',
+    '.ps-set .ps-sw input{appearance:none;-webkit-appearance:none;width:38px;height:22px;margin:0;border-radius:var(--r-pill);background:var(--line2);border:1px solid transparent;position:relative;cursor:pointer;transition:background .16s cubic-bezier(.16,1,.3,1),border-color .16s cubic-bezier(.16,1,.3,1);display:block}',
+    '.ps-set .ps-sw input::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:var(--panel);box-shadow:var(--knob-shadow);transition:transform .16s cubic-bezier(.16,1,.3,1)}',
     '.ps-set .ps-sw input:checked{background:var(--accent);border-color:var(--accent)}',
     '.ps-set .ps-sw input:checked::after{transform:translateX(16px);background:var(--onaccent)}',
     '.ps-set .ps-sw input:focus-visible{outline:none;box-shadow:0 0 0 1px var(--fg)}',
-    '.ps-set .ps-sw b{font-size:12.5px;font-weight:400;color:var(--fg3);min-width:22px}',
-    '.ps-set .ps-sw input:checked ~ b{color:var(--fg);font-weight:500}',
+    '.ps-set .ps-host-text{font-size:12px;color:var(--fg3);font-family:var(--mono);text-align:right}',
     '.ps-set .ps-seg{display:inline-flex;border:1px solid var(--line2);border-radius:var(--r-ctl);overflow:hidden;background:var(--panel2);padding:2px;gap:2px}',
     '.ps-set .ps-opt{font-size:12px;font-weight:500;padding:5px 12px;background:transparent;color:var(--fg2);border:0;border-radius:5px;cursor:pointer;transition:all .14s cubic-bezier(.16,1,.3,1)}',
     '.ps-set .ps-opt:last-child{border-right:0}',
@@ -329,7 +330,7 @@
       if (!c) return;
       var txt = '';
       if (state === 'saving') txt = '保存中…';
-      else if (state === 'ok') txt = '已保存 ' + clock();
+      else if (state === 'ok') txt = '';
       else if (state === 'dirty') txt = '待保存';
       else if (state === 'err') txt = msg || '保存失败';
       c.stat.textContent = txt;
@@ -559,10 +560,9 @@
 
       if (d.kind === 'bool') {
         var input = h('input', { type: 'checkbox' });
-        var label = h('label', { class: 'ps-sw' }, [input, h('b', { text: '关' })]);
-        input.addEventListener('change', function () { syncSwitch(d, c); onChange(d); });
+        var label = h('label', { class: 'ps-sw' }, [input]);
+        input.addEventListener('change', function () { onChange(d); });
         c.input = input;
-        c.onoff = label.querySelector('b');
         ctl.appendChild(label);
       } else if (d.kind === 'seg') {
         c.value = (d.options && d.options[0]) ? d.options[0].v : false;
@@ -633,8 +633,15 @@
           }
         });
         c.input = ti;
-        ctl.appendChild(ti);
-        if (d.unit) ctl.appendChild(h('span', { class: 'ps-unit', text: d.unit }));
+        if (d.unit) {
+          var wrap = h('div', { class: 'ps-num-wrap' }, [
+            ti,
+            h('span', { class: 'ps-unit', text: d.unit })
+          ]);
+          ctl.appendChild(wrap);
+        } else {
+          ctl.appendChild(ti);
+        }
       }
 
       var stat = h('span', { class: 'ps-stat' });
@@ -695,10 +702,8 @@
         h('div', {}, [
           h('div', { class: 'ps-lbl', text: '高级设置' })
         ]),
-        h('div', { class: 'ps-ctl' }, [
-          h('span', { class: 'ps-unit', text: '127.0.0.1:8317' })
-        ]),
-        h('span', {}, [link])
+        h('div', { class: 'ps-stat ps-host-text', text: '127.0.0.1:8317' }),
+        h('div', { class: 'ps-ctl' }, [link])
       ]);
     }
 

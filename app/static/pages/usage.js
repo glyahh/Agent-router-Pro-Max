@@ -348,6 +348,36 @@
     return '<div class="qfoot">' + parts.join('') + '</div>';
   }
 
+  function quotaCardHTML(win) {
+    var p = pctText(win.used_percent);
+    var hot = win.used_percent !== null && win.used_percent >= 75;
+    var bad = win.used_percent !== null && win.used_percent >= 90;
+    var stateCls = bad ? 'bad' : hot ? 'warn' : '';
+    var valHTML = p === null ? '—' : (p + '%');
+    var wPct = (p === null ? 0 : clampPct(win.used_percent));
+    
+    var tail = '重置时间未知';
+    if (win.reset_at !== null) {
+      var left = win.reset_at - Math.floor(Date.now() / 1000);
+      tail = fmtAgo(left);
+    }
+    var title = esc(windowLabel(win.window_minutes) || win.label);
+
+    return '<div class="quota-card">'
+      + '<div class="qc-top">'
+      + '<span class="qc-title">' + title + '</span>'
+      + '<span class="qc-pct ' + stateCls + '">' + valHTML + '</span>'
+      + '</div>'
+      + '<div class="qc-bar">'
+      + '<div class="qc-fill ' + stateCls + '" style="width:' + wPct + '%"></div>'
+      + '</div>'
+      + '<div class="qc-foot">'
+      + '<span>' + esc(tail) + '</span>'
+      + (win.limit_reached ? '<span class="bad">已达上限</span>' : '')
+      + '</div>'
+      + '</div>';
+  }
+
   function quotaEmptyHTML() {
     return emptySlotHTML('尚无配额观测', '');
   }
@@ -367,21 +397,20 @@
 
     var html = '<div class="sec">' + head;
     if (windows.length) {
-      var rows = '';
-      for (var i = 0; i < windows.length; i++) rows += quotaRowHTML(windows[i]);
-      html += '<div class="qbox">' + rows + quotaFootHTML(windows) + '</div>';
+      var cards = '';
+      for (var i = 0; i < windows.length; i++) cards += quotaCardHTML(windows[i]);
+      html += '<div class="quota-grid">' + cards + '</div>';
     }
     if (models.length) {
-      // 同一账号不同模型的读数能差很多（实测并存过 3% 与 75%），必须分组看
       html += '<div class="u-mgrid">';
       for (var m = 0; m < models.length; m++) {
         var g = models[m];
-        var mrows = '';
-        for (var n = 0; n < g.windows.length; n++) mrows += quotaRowHTML(g.windows[n]);
+        var mcards = '';
+        for (var n = 0; n < g.windows.length; n++) mcards += quotaCardHTML(g.windows[n]);
         html += '<div class="qbox"><div class="u-mhead">'
           + '<span class="nm mono" title="' + esc(g.model) + '">' + esc(g.model) + '</span>'
           + '<span class="tag">MODEL</span></div>'
-          + mrows + quotaFootHTML(g.windows) + '</div>';
+          + '<div class="quota-grid" style="margin-bottom:0">' + mcards + '</div></div>';
       }
       html += '</div>';
     }
@@ -600,19 +629,19 @@
       var shown = c.label + (labelCount[c.label] > 1 ? ' · ' + keyTail(c.source_key) : '');
       body += '<tr>'
         + '<td class="n" title="' + esc(maskSourceKey(c.source_key)) + '">' + esc(shown) + '</td>'
-        + '<td title="' + esc(maskSourceKey(c.source_key)) + '">' + esc(c.vendor || '—') + '</td>'
-        + '<td>' + statusChip(c) + '</td>'
-        + '<td class="r n">' + c.success + '</td>'
-        + '<td class="r' + (c.failed ? ' u-bad' : '') + '">' + c.failed + '</td>'
-        + '<td class="r"' + (recent ? ' title="' + esc(recent.time) + '"' : '') + '>'
+        + '<td class="c" title="' + esc(maskSourceKey(c.source_key)) + '">' + esc(c.vendor || '—') + '</td>'
+        + '<td class="c">' + statusChip(c) + '</td>'
+        + '<td class="c n">' + c.success + '</td>'
+        + '<td class="c' + (c.failed ? ' u-bad' : '') + '">' + c.failed + '</td>'
+        + '<td class="c"' + (recent ? ' title="' + esc(recent.time) + '"' : '') + '>'
         + recentText + '</td>'
         + '</tr>';
     }
 
-    html += '<div class="chart tight"><table class="t" data-role="srctable">'
-      + '<tr><th>来源</th><th>服务商</th><th>状态</th><th class="r">成功</th><th class="r">失败</th>'
-      + '<th class="r">最近 10 分钟</th></tr>'
-      + body + '</table></div></div>';
+    html += '<div class="chart tight"><div class="u-scroll"><table class="t" data-role="srctable">'
+      + '<thead><tr><th>来源</th><th class="c">服务商</th><th class="c">状态</th><th class="c">成功</th><th class="c">失败</th>'
+      + '<th class="c">最近 10 分钟</th></tr></thead>'
+      + '<tbody>' + body + '</tbody></table></div></div></div>';
     return html;
   }
 
@@ -686,26 +715,26 @@
         body += '<tr>'
           + '<td class="n">' + esc(cell) + '</td>'
           + '<td>' + esc(it2.label) + '</td>'
-          + '<td class="r n">' + it2.success + '</td>'
-          + '<td class="r' + (it2.failed ? ' u-bad' : '') + '">' + it2.failed + '</td>'
-          + '<td class="r">' + (tot ? failRate + '%' : '—') + '</td>'
-          + '<td><span class="u-mini' + (failRate >= 10 ? ' hot' : '') + '"><i data-w="'
+          + '<td class="c n">' + it2.success + '</td>'
+          + '<td class="c' + (it2.failed ? ' u-bad' : '') + '">' + it2.failed + '</td>'
+          + '<td class="c">' + (tot ? failRate + '%' : '—') + '</td>'
+          + '<td class="c"><span class="u-mini' + (failRate >= 10 ? ' hot' : '') + '"><i data-w="'
           + clampPct(Math.round(it2.success / peak * 100)) + '" style="--w:' + clampPct(Math.round(it2.success / peak * 100)) + '%"></i></span></td>'
           + '</tr>';
       }
       if (names.length > 1) {
         body += '<tr class="u-sum"><td>' + esc(byWeek ? g2.period + ' 起一周' : g2.period) + '</td>'
           + '<td>合计</td>'
-          + '<td class="r">' + g2.ok + '</td>'
-          + '<td class="r' + (g2.bad ? ' u-bad' : '') + '">' + g2.bad + '</td>'
-          + '<td class="r">—</td><td></td></tr>';
+          + '<td class="c">' + g2.ok + '</td>'
+          + '<td class="c' + (g2.bad ? ' u-bad' : '') + '">' + g2.bad + '</td>'
+          + '<td class="c">—</td><td class="c"></td></tr>';
       }
     }
 
     html += '<div class="chart tight"><div class="u-scroll"><table class="t" data-role="histtable">'
-      + '<tr><th>' + (byWeek ? '周（周一起）' : '日期') + '</th><th>来源</th>'
-      + '<th class="r">成功</th><th class="r">失败</th><th class="r">失败率</th><th>相对量</th></tr>'
-      + body + '</table></div></div></div>';
+      + '<thead><tr><th>' + (byWeek ? '周（周一起）' : '日期') + '</th><th>来源</th>'
+      + '<th class="c">成功</th><th class="c">失败</th><th class="c">失败率</th><th class="c">相对量</th></tr></thead>'
+      + '<tbody>' + body + '</tbody></table></div></div></div>';
     return html;
   }
 

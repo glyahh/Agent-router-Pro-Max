@@ -1047,7 +1047,6 @@ class Shell:
             close_to_tray = True
         if close_to_tray and not self.quitting.is_set():
             self.hide_window()
-            self.notify('正在后台运行')
             return False
         return True
 
@@ -1205,26 +1204,12 @@ class Shell:
                                   for g in sorted(selected))
 
     def _tray_title(self, state: str) -> str:
-        """只有网关状态那一版。start_tray() 用——查计数和路由会卡住主线程。"""
-        label = STATE_LABELS.get(state, '网关状态未知 :%d') % GATEWAY_PORT
-        return '%s · %s' % (TITLE, label)
+        """极简托盘标题。"""
+        return 'Prism'
 
     def tray_tip(self, now: float | None = None) -> str:
-        """托盘悬浮提示：网关状态 + 今日计数 + 当前路由。
-
-        TRAY_TIP_INTERVAL 秒内重复调用直接返回上次的结果。返回值一定不超过
-        TRAY_TIP_MAX 个字符（Windows 的 szTip 只有 128 个 WCHAR）。
-        """
-        now = time.time() if now is None else now
-        if self._tip_text is not None and now - self._tip_at < TRAY_TIP_INTERVAL:
-            return self._tip_text
-        # 一次身份核对喂三处：标题、颜色、以及 _tip_route 要不要去问网关
-        state = self.gateway_state()
-        text = ' · '.join([self._tray_title(state),
-                           self._tip_today(), self._tip_route(state)])
-        self._tip_text = text if len(text) <= TRAY_TIP_MAX else text[:TRAY_TIP_MAX - 1] + '…'
-        self._tip_at = now
-        return self._tip_text
+        """极简托盘悬浮提示：固定为极简产品名 Prism，禁绝长篇摘要。"""
+        return 'Prism'
 
     def restart_gateway(self, *_a) -> None:
         """README 里的托盘"重启网关"。**先探后拉**，不杀进程——见文件头的说明。"""

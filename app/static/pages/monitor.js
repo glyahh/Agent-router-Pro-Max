@@ -228,10 +228,10 @@
         S.paused ? '已暂停自动刷新，当前显示缓存数据。' : '当前显示缓存数据。'));
     }
 
-    r.appendChild(gatewaySection(S.data.gateway || {}));
-    // sampling：/api/monitor 每轮都带回来（health.monitor_state 里的 "sampling" 键），
-    // 老前端没消费它。两种键名都认，免得后端改过名就静默丢掉。
-    r.appendChild(routingSection(S.data.routing || {}, S.data.sampling || S.data.sample_state || null));
+    r.appendChild(metricGrid(S.data.gateway || {}, S.data.routing || {}, S.data.sampling || S.data.sample_state || null, S.data.sources || []));
+    var nb = noticesBox(S.data.gateway || {}, S.data.routing || {});
+    if (nb) r.appendChild(nb);
+    r.appendChild(routingSection(S.data.routing || {}));
     r.appendChild(sourcesSection(S.data.sources || []));
   }
 
@@ -279,82 +279,62 @@
     return 'unknown';
   }
 
-  function gatewaySection(g) {
-    var running = g.running === true;
+  /* ── Codex 极简 4 连指标网格（去除所有副文本与装饰小标签） ──── */
+  function metricGrid(g, rt, sp, srcs) {
     var port = (g.port === null || g.port === undefined) ? 8317 : g.port;
+
+    var card1 = h('div', { class: 'metric-card' }, [
+      h('div', { class: 'm-head' }, [h('span', { text: '网关核心' })]),
+      h('div', { class: 'm-val', text: ':' + port })
+    ]);
+
+    var spRunning = sp && sp.running === true;
+    var spInterval = (sp && typeof sp.interval_sec === 'number') ? Math.round(sp.interval_sec) : 600;
+    var card2 = h('div', { class: 'metric-card' }, [
+      h('div', { class: 'm-head' }, [h('span', { text: '数据采样' })]),
+      h('div', { class: 'm-val', text: spRunning ? spInterval + 's' : '—' })
+    ]);
+
+    var activeCount = 0;
+    for (var i = 0; i < srcs.length; i++) {
+      if (srcs[i] && srcs[i].enabled === true) activeCount++;
+    }
+    var card3 = h('div', { class: 'metric-card' }, [
+      h('div', { class: 'm-head' }, [h('span', { text: '活跃通道' })]),
+      h('div', { class: 'm-val', text: activeCount + ' / ' + srcs.length })
+    ]);
+
+    var models = (rt && Array.isArray(rt.exposed_models)) ? rt.exposed_models : [];
+    var card4 = h('div', { class: 'metric-card' }, [
+      h('div', { class: 'm-head' }, [h('span', { text: '暴露模型' })]),
+      h('div', { class: 'm-val', text: String(models.length) })
+    ]);
+
+    return h('div', { class: 'metric-grid' }, [card1, card2, card3, card4]);
+  }
+
+  function noticesBox(g, rt) {
+    var running = g.running === true;
     var ident = identityOf(g);
     var note = (typeof g.identity_note === 'string' && g.identity_note.trim()) ? g.identity_note.trim() : null;
     var conf = (typeof g.identity_config === 'string' && g.identity_config.trim()) ? g.identity_config.trim() : null;
+    var list = [];
 
-    var verCell;
-    if (!g.version) {
-      verCell = h('span', { class: 'v' }, chip('未知'));
-    } else {
-      // 版本对比全塞进一个 .v 里：它在 .kv .r 中是 flex:1 的值位，
-      // 拆成多个 .v 会各自抢空间，把后面的说明挤散
-      verCell = h('span', { class: 'v' }, [
-        h('span', { text: g.version }),
-        g.latest ? h('span', { class: 'hint', text: ' → ' }) : null,
-        g.latest ? h('span', { text: g.latest }) : null,
-        g.version_stale ? h('span', { text: ' ' }) : null,
-        g.version_stale ? chip('落后', 'warn', '有更新版本，重启网关可更新') : (g.latest ? chip('最新', 'ok') : null)
-      ]);
-    }
-
-    // 运行状态那一格：只有 identity 是 ok 才配说"在线"。其余三种一律降级措辞
-    // ——foreign 和 unknown 都用了 .dot.warn（黄色），短板说清楚它为什么不是绿的。
-    var runCell;
     if (!running) {
-      runCell = [h('span', { class: 'dot off' }), h('span', { class: 'v', text: '离线' })];
-    } else if (ident === 'ok') {
-      runCell = [h('span', { class: 'dot' }), h('span', { class: 'v', text: '在线' })];
+      list.push(notice('bad', '网关未运行', ''));
     } else if (ident === 'foreign') {
-      runCell = [h('span', { class: 'dot warn' }),
-        h('span', { class: 'v', text: '在线（配置不匹配）' })];
-    } else {
-      runCell = [h('span', { class: 'dot warn' }),
-        h('span', { class: 'v', text: '在线（身份未核实）' })];
-    }
-
-    var identCell;
-    if (ident === 'ok') {
-      identCell = h('span', { class: 'v' }, [
-        chip('本目录', 'ok'),
-        h('span', { text: ' ' }), h('span', { text: conf || '—' })]);
-    } else if (ident === 'foreign') {
-      identCell = h('span', { class: 'v' }, [
-        chip('非本目录', 'warn'),
-        h('span', { text: ' ' }), h('span', { text: conf || '配置路径不可读' })]);
-    } else if (ident === 'down') {
-      identCell = h('span', { class: 'v' }, chip('未运行', 'sm'));
-    } else {
-      identCell = h('span', { class: 'v' }, [
-        chip('未核实', 'warn'),
-        h('span', { text: ' ' }), h('span', { text: conf || '—' })]);
-    }
-
-    var cfgOk = g.config_ok;
-    var body = kv([
-      ['运行状态', runCell, null],
-      ['网关身份', identCell, null],
-      ['端口', String(port), null],
-      ['网关版本', verCell, null],
-      ['配置健康', h('span', { class: 'v' }, [chip(cfgOk === true ? '正常' : cfgOk === false ? '异常' : '未知',
-          cfgOk === true ? 'ok' : cfgOk === false ? 'bad' : 'warn')]),
-        null]
-    ]);
-
-    var sec = section('网关', null, h('div', { class: 'card' }, h('div', { class: 'cardb' }, body)));
-    if (!running) {
-      sec.insertBefore(notice('bad', '网关未运行', ''), sec.lastChild);
-    } else if (ident === 'foreign') {
-      sec.insertBefore(notice('warn', '网关配置来源不一致', note || (conf || '')), sec.lastChild);
+      list.push(notice('warn', '网关配置来源不一致', note || (conf || '')));
     } else if (ident === 'unknown') {
-      sec.insertBefore(notice('warn', '网关身份未核实', note || ''), sec.lastChild);
-    } else if (g.version_stale && g.latest) {
-      sec.insertBefore(notice('warn', '网关版本可更新：' + g.version + ' → ' + g.latest, ''), sec.lastChild);
+      list.push(notice('warn', '网关身份未核实', note || ''));
     }
-    return sec;
+    if (g.version_stale && g.latest) {
+      list.push(notice('warn', '网关版本可更新：' + g.version + ' → ' + g.latest, ''));
+    }
+
+    if (!list.length) return null;
+    var wrap = h('div', { class: 'sec' });
+    for (var i = 0; i < list.length; i++) wrap.appendChild(list[i]);
+    return wrap;
   }
 
   var GROUPS = [['gpt', 'GPT 中转站'], ['deepseek', 'DEEPSEEK'], ['glm', 'GLM']];
@@ -372,13 +352,10 @@
     ]);
   }
 
-  function routingSection(rt, sampling) {
-    // 网关不可达时后端会在 note 里写原因，此时 selected 全是 null。null 是"读不到"，
-    // 不是"没选"——丢掉 note 再渲染 null，等于替后端做了它没做的断言。
+  function routingSection(rt) {
     var sel = (rt && rt.selected && typeof rt.selected === 'object') ? rt.selected : null;
     var models = (rt && Array.isArray(rt.exposed_models)) ? rt.exposed_models : null;
     var note = (rt && typeof rt.note === 'string' && rt.note.trim()) ? rt.note.trim() : null;
-    // 判不了的两种情形：note 说了原因，或者字段压根没给。两者都不许说成"没有"。
     var blind = note !== null || sel === null || models === null;
     var missing = [];
     if (sel === null) missing.push('selected');
@@ -390,84 +367,111 @@
       var picked = sel ? sel[g[0]] : null;
       var unknown = (picked === null || picked === undefined) && blind;
       var state = picked === 'conflict' ? 'bad' : unknown ? 'warn' : picked ? 'ok' : '';
-      var what = picked === 'conflict' ? '多个来源同时启用'
-        : picked ? String(picked)
-          : unknown ? '无法判定' : '未选择来源';
+      
+      // 来源胶囊展示：切分逗号，杜绝粗暴拼串
+      var colbContent;
+      if (picked === 'conflict') {
+        colbContent = h('span', { class: 'sub', text: '多个来源同时启用' });
+      } else if (unknown) {
+        colbContent = h('span', { class: 'sub', text: '无法判定' });
+      } else if (!picked) {
+        colbContent = h('span', { class: 'sub', text: '未选择来源' });
+      } else {
+        var rawParts = String(picked).split(',');
+        var chips = rawParts.map(function (p) {
+          var trimmed = p.trim();
+          return trimmed ? h('span', { class: 'route-chip', text: trimmed }) : null;
+        }).filter(Boolean);
+        colbContent = h('div', { class: 'route-chips' }, chips);
+      }
+
+      var headKids = [h('span', { class: 'nm', text: g[1] })];
+      if (picked === 'conflict') headKids.push(chip('冲突', 'bad'));
+      else if (unknown) headKids.push(chip('未知', 'warn', reason));
+
       return h('div', { class: 'col' }, [
-        h('div', { class: 'colh' }, [
-          h('span', { class: 'nm', text: g[1] }),
-          chip(picked === 'conflict' ? '冲突' : unknown ? '未知' : picked ? 'ACTIVE' : '未选', state,
-            unknown ? reason : null)
-        ]),
-        h('div', { class: 'colb', text: what })
+        h('div', { class: 'colh' }, headKids),
+        h('div', { class: 'colb' }, [colbContent])
       ]);
     }));
 
     var body = h('div', null, [cols]);
     if (!models.length) {
-      // 读不到模型列表和"一个模型都没暴露"是两回事，别让盲区显示成空
       body.appendChild(blind
         ? statebox('bad', '无法判定已暴露模型', reason)
         : statebox('empty', '暂无已暴露模型', '请在首页保存路由。'));
     } else {
       var MAX = 80;
-      // 用 .toolbar 当容器：它本身就是 flex+wrap+gap，不必再定义一套 chips 类
-      body.appendChild(h('div', { class: 'toolbar' }, models.slice(0, MAX).map(function (m) {
-        return chip(m, '', String(m));
-      }).concat(models.length > MAX ? [chip('+' + (models.length - MAX))] : [])));
+      var vaultHead = h('div', { class: 'vault-head' }, [
+        h('span', { text: '客户端已暴露模型目录' }),
+        h('span', { class: 'vault-count', text: models.length + ' MODELS' })
+      ]);
+      var vaultBody = h('div', { class: 'vault-body' }, models.slice(0, MAX).map(function (m) {
+        return h('span', { class: 'model-chip', text: String(m), title: String(m) });
+      }).concat(models.length > MAX ? [h('span', { class: 'model-chip', text: '+' + (models.length - MAX) })] : []));
+      body.appendChild(h('div', { class: 'model-vault' }, [vaultHead, vaultBody]));
     }
 
-    var sec = section('路由', null, body);
-    // note 是后端自己写的原话，照原样显示，不替它改写
+    var sec = section('路由通道', null, body);
     if (blind && reason) sec.insertBefore(notice('warn', '当前路由无法判定：', reason), sec.lastChild);
     return sec;
   }
 
   function sourcesSection(srcs) {
-    var since = null;
-    for (var i = 0; i < srcs.length; i++) {
-      if (srcs[i] && srcs[i].counters_since) { since = srcs[i].counters_since; break; }
-    }
-    if (!since) since = '网关启动以来';
-
-    // 启用的排前面，其次按成功数降序：用得多的来源一眼能看到
     var rows = srcs.slice().sort(function (a, b) {
       var ea = a.enabled === true ? 1 : 0, eb = b.enabled === true ? 1 : 0;
       if (ea !== eb) return eb - ea;
       return (b.success || 0) - (a.success || 0);
     }).map(function (s) {
       var oauth = s.kind === 'oauth';
-      // 三态：true / false 之外还有 null——网关不可达时后端只能给 null。
-      // success、failed、cooldown 取不到都显示 —，enabled 照同一规矩来；
-      // 把"取不到"写成 DISABLED 是在替后端断言"这个来源被停用了"。
       var enabled = s.enabled === true ? true : (s.enabled === false ? false : null);
-      var failed = (typeof s.failed === 'number') ? s.failed : null;
-      var cd = cooldownText(s.cooldown);   // API key 来源本来就取不到冷却 → null → 显示 —
+      var succ = (typeof s.success === 'number') ? s.success : 0;
+      var failed = (typeof s.failed === 'number') ? s.failed : 0;
+      var total = succ + failed;
+      var cd = cooldownText(s.cooldown);
+
+      // 微型吞吐条与成功率
+      var sparkNode;
+      if (total > 0) {
+        var okRate = Math.round((succ / total) * 100);
+        var track = h('div', { class: 'sparkbar-track' }, [
+          h('div', { class: 'sparkbar-fill-ok', style: 'width:' + okRate + '%' }),
+          h('div', { class: 'sparkbar-fill-bad', style: 'width:' + (100 - okRate) + '%' })
+        ]);
+        sparkNode = h('div', { class: 'sparkbar-box' }, [
+          track,
+          h('span', { class: 'mono', style: 'font-size:10px;color:var(--fg3)', text: okRate + '%' })
+        ]);
+      } else {
+        sparkNode = h('span', { class: 'mono', text: '—' });
+      }
+
       return [
         { text: s.label || s.id || '（未命名）', cls: 'n' },
-        // 光看来源名分不清 goat / goat-glm、srapi / srapi-deepseek（label 撞车），
-        // 所以 ID 单独占一列，和用量页 BY SOURCE 补凭据尾巴是同一个目的。
-        { text: s.id || '—' },
-        { chip: oauth ? 'OAuth' : 'API 密钥' },
-        enabled === null ? { text: '—' } : { chip: enabled ? 'ACTIVE' : 'DISABLED', kind: enabled ? 'ok' : '' },
-        { text: num(s.success), cls: 'r n' },
-        // 失败和冷却只在非零时上芯片：cell 里能用的颜色只有 .n（亮）和默认（暗），
-        // 红色只有 .tag 有，所以状态类的东西一律走芯片
-        failed ? { chip: String(s.failed), kind: 'bad', cls: 'r' } : { text: num(s.failed), cls: 'r' },
-        cd ? { chip: cd, kind: 'bad' } : { text: '—' },
-        { text: s.quota_hint || '—' }
+        { text: s.id || '—', cls: 'c mono' },
+        { chip: oauth ? 'OAuth' : 'API 密钥', cls: 'c' },
+        enabled === null ? { text: '—', cls: 'c' } : { chip: enabled ? 'ACTIVE' : 'DISABLED', kind: enabled ? 'ok' : '', cls: 'c' },
+        { node: sparkNode, cls: 'c' },
+        { text: num(s.success), cls: 'c mono' },
+        { text: num(s.failed), cls: 'c mono' + (failed ? ' u-bad' : '') },
+        cd ? { chip: cd, kind: 'bad', cls: 'c' } : { text: '—', cls: 'c' },
+        { text: s.quota_hint || '—', cls: 'c' }
       ];
     });
 
-    var empty = statebox('empty', '暂无上游来源',
-      '请在首页添加来源。');
-
-    var sec = section('来源', null,
+    var empty = statebox('empty', '暂无上游来源', '请在首页添加来源。');
+    var sec = section('上游来源', null,
       h('div', null, [
         table([
-          { t: '来源' }, { t: 'ID' }, { t: '类型' }, { t: '启用' },
-          { t: '成功', cls: 'r' }, { t: '失败', cls: 'r' },
-          { t: '冷却' }, { t: '配额' }
+          { t: '来源' },
+          { t: 'ID', cls: 'c' },
+          { t: '类型', cls: 'c' },
+          { t: '状态', cls: 'c' },
+          { t: '质量', cls: 'c' },
+          { t: '成功', cls: 'c' },
+          { t: '失败', cls: 'c' },
+          { t: '冷却', cls: 'c' },
+          { t: '配额', cls: 'c' }
         ], rows, empty)
       ]));
     return sec;

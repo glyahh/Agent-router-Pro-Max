@@ -529,16 +529,16 @@
       var link = h('a', { class: 'btn sm', href: href, download: name, target: '_blank', rel: 'noopener' }, '下载');
       return [
         { text: name, cls: 'n' },
-        { node: big ? chip('大文件', 'warn', '文件较大，可能已截断') : chip('正常') },
-        { text: size(f.size), cls: 'r' },
-        { text: mtime(f.modified) },
-        { node: link, cls: 'act' }
+        { node: big ? chip('大文件', 'warn', '文件较大，可能已截断') : chip('正常'), cls: 'c' },
+        { text: size(f.size), cls: 'c mono' },
+        { text: mtime(f.modified), cls: 'c' },
+        { node: link, cls: 'c' }
       ];
     });
 
     return h('div', null, [
       table(
-        [{ t: '文件' }, { t: '状态' }, { t: '大小', cls: 'r' }, { t: '修改时间' }, { t: '操作', cls: 'act' }],
+        [{ t: '文件' }, { t: '状态', cls: 'c' }, { t: '大小', cls: 'c' }, { t: '修改时间', cls: 'c' }, { t: '操作', cls: 'c' }],
         rows, null)
     ]);
   }

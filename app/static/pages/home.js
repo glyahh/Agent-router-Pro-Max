@@ -1242,7 +1242,7 @@
         return api('/api/sources/' + enc(p.id) + '/head', { method: 'PUT', body: { head: want } })
           .then(function (r) {
             S.busy = false;
-            flash('ok', (r.changed ? '渠道头已更新为「' + (r.head || '无头') + '」' : '渠道头未修改') + '，保存路由后生效。');
+            S.msg = null;
             return reload();
           }).catch(function (e) {
             S.busy = false;
@@ -1298,7 +1298,7 @@
       .then(function (data) {
         applyState(data);
         S.busy = false;
-        S.msg = { kind: 'ok', text: '路由已保存' };
+        S.msg = null;
         return api('/api/sources').catch(function () { return null; });
       })
       .then(function (s) { if (Array.isArray(s)) S.sources = s; renderAll(); })
@@ -1342,7 +1342,7 @@
       S.sources = Array.isArray(rs[1]) ? rs[1] : null;
       S.agents = Array.isArray(rs[2]) ? rs[2] : null;
       S.busy = false; S.loadErr = null;
-      if (showMsg) S.msg = { kind: 'ok', text: '已刷新' };
+      if (showMsg) S.msg = null;
       renderAll();
     }).catch(function (e) {
       if (!S.wrap) return;                       // 已 unmount：别碰 DOM（同上）
@@ -1685,9 +1685,7 @@
     req.then(function (r) {
       var id = (r && r.id) || f.id;
       S.busy = false; S.form = null;
-      S.msg = { kind: built.warn ? 'warn' : 'ok',
-        text: (isCreate ? '来源已创建：' : '来源已更新：') + id +
-          (built.warn ? '（' + built.warn + '）' : '') };
+      S.msg = built.warn ? { kind: 'warn', text: built.warn } : null;
       return reload();
     }).catch(function (e) {
       S.busy = false;
@@ -1702,7 +1700,7 @@
     renderTree(); renderActions();
     api('/api/sources/' + enc(id), { method: 'DELETE' }).then(function () {
       S.busy = false;
-      S.msg = { kind: 'ok', text: '已删除来源 ' + id };
+      S.msg = null;
       return reload();
     }).catch(function (e) {
       S.busy = false;

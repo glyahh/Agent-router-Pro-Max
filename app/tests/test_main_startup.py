@@ -117,7 +117,7 @@ try:
 
     server.read_settings = lambda: {'app': {'close_to_tray': True}}
     check('托盘常驻开（默认）：关闭被取消', shell.request_close(), False)
-    check('取消时隐藏了窗口并通知了用户', (len(hidden), len(notified)), (1, 1))
+    check('取消时隐藏了窗口且保持静默（不弹通知气泡）', (len(hidden), len(notified)), (1, 0))
     server.read_settings = lambda: {'app': {'close_to_tray': False}}
     check('托盘常驻关：放行真关闭', shell.request_close(), True)
     shell.quitting.set()
@@ -152,7 +152,7 @@ try:
 finally:
     bridge.enabled_groups = _orig_groups
 title = shell._tray_title('ok')
-check_true('标题带名字与在线', title.startswith('Prism · ') and '网关在线' in title, title)
+check('标题极简为 Prism', title, 'Prism')
 _orig_identity = main.identity.gateway_identity
 try:
     main.identity.gateway_identity = lambda: {'state': 'foreign'}
@@ -161,35 +161,11 @@ finally:
     main.identity.gateway_identity = _orig_identity
 
 print()
-print('== 6. tray_tip 节流（now 注入，零真数据源）==')
-_orig_history = sampling.history
+print('== 6. tray_tip 极简（固定为 Prism，不超限）==')
 shell = main.Shell(8318)
-today_calls = []
-
-
-def _fake_today():
-    today_calls.append(1)
-    return '今日请求 3 成功/1 失败'
-
-
-try:
-    sampling.history = lambda days: [{'success': 3, 'failed': 1}]
-    shell._tip_today = _fake_today          # 实例级桩：数"真算了几次"
-    bridge.enabled_groups = lambda: {'gpt': ['openai-official']}
-    shell.gateway_state = lambda: 'ok'
-    first = shell.tray_tip(now=1000.0)
-    check_true('首算含今日计数与路由',
-               '今日请求 3 成功/1 失败' in first and 'gpt=openai-official' in first, first)
-    check('首算调了一次今日计数', len(today_calls), 1)
-    cached = shell.tray_tip(now=1000.0 + main.TRAY_TIP_INTERVAL - 1)
-    check('节流窗口内返回缓存', cached, first)
-    check('节流窗口内不重算', len(today_calls), 1)
-    second = shell.tray_tip(now=1000.0 + main.TRAY_TIP_INTERVAL + 0.5)
-    check('窗口外真的重算了（今日计数被再次调用）', len(today_calls), 2)
-    check_true('tip 不超 Windows szTip 上限', len(second) <= main.TRAY_TIP_MAX, str(len(second)))
-finally:
-    sampling.history = _orig_history
-    bridge.enabled_groups = _orig_groups
+first = shell.tray_tip(now=1000.0)
+check('托盘悬浮提示固定为 Prism', first, 'Prism')
+check_true('tip 不超 Windows szTip 上限', len(first) <= main.TRAY_TIP_MAX, str(len(first)))
 
 check_true('notify_already_running 是模块级函数（历史上曾被缩进进 notify_error 体内，'
            '第二次启动分支一走就 NameError 静默退出）',
