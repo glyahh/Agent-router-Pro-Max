@@ -45,9 +45,10 @@
   }
   function size(n) {
     if (typeof n !== 'number' || !isFinite(n)) return '—';
-    if (n < 1024) return n + ' B';
-    if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
-    return (n / 1048576).toFixed(2) + ' MB';
+    // 与 app.js 的 ui.bytes 同规则：B/KB/MB/GB，非 B 保留 1 位小数
+    var u = ['B', 'KB', 'MB', 'GB'], i = 0;
+    while (n >= 1024 && i < u.length - 1) { n = n / 1024; i++; }
+    return (i === 0 ? String(n) : n.toFixed(1)) + ' ' + u[i];
   }
   // server.py 给的是 ISO 字符串，别的地方可能给 unix 秒——两种都吃
   function mtime(v) {
@@ -55,7 +56,7 @@
     var d = (typeof v === 'number') ? new Date(v * 1000) : new Date(String(v));
     if (isNaN(d.getTime())) return String(v).slice(0, 16);
     function p(n) { return (n < 10 ? '0' : '') + n; }
-    return p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
   }
   function shortErr(e) {
     if (!e) return '未知错误';
@@ -136,10 +137,15 @@
   }
   // .sw2 是 app.css 里的开关结构（设置页那套），不用原生复选框
   function sw2(label, on, onchange) {
-    var box = h('span', { class: 'sw2' + (on ? ' on' : ''), title: label }, [h('i'), h('b', { text: label })]);
+    var box = h('button', {
+      class: 'sw2' + (on ? ' on' : ''), type: 'button', title: label
+    }, [h('i'), h('b', { text: label })]);
+    box.setAttribute('role', 'switch');
+    box.setAttribute('aria-checked', on ? 'true' : 'false');
     box.addEventListener('click', function () {
       on = !on;
       box.classList.toggle('on', on);
+      box.setAttribute('aria-checked', on ? 'true' : 'false');
       onchange(on);
     });
     return box;
@@ -296,13 +302,16 @@
   }
 
   function doClear() {
+    if (S.busy) return Promise.resolve();   // 在途时不再发第二次 DELETE
+    S.busy = true;
     S.confirmClear = false;
     clearTimeout(S.confirmTimer);
     return apiSend('DELETE', 'api/logs').then(function () {
       S.raw = []; S.filtered = []; S.hiddenCount = 0; S.errCount = 0; S.gap = false; S.err = null;
-      if (S.ctx && S.ctx.toast) S.ctx.toast('日志已清空', 'ok');
+      S.busy = false;
       render();
     }, function (e) {
+      S.busy = false;
       S.err = shortErr(e);
       if (S.ctx && S.ctx.toast) S.ctx.toast('清空失败：' + S.err, 'bad');
       render();
@@ -312,6 +321,8 @@
   // 提示区单独成块，搜索时能就地替换而不动工具条（否则输入框会失焦）
   function notes() {
     var box = h('div', { id: 'pm-notes' });
+    // 拉取失败的原因：有旧数据时日志区照常显示，失败原因走这条横幅
+    if (S.err && S.raw.length) box.appendChild(notice('bad', '本次读取失败：', S.err));
     if (S.queryBad) box.appendChild(notice('bad', '正则语法错误：', S.query + '（' + S.queryBad + '）'));
     // 服务端在读主日志时撞到字节上限才置这个标志：这时候给回的行数比要的少，
     // 界面必须说出来，不然用户会把"只有这几行"当成"日志就这么多"。
@@ -356,7 +367,10 @@
 
   function logView() {
     if (!S.raw.length) {
-      return statebox('empty', S.err ? '未获取到日志' : '暂无日志');
+      // 没有缓冲可显示时，失败要给出原因，别只说"未获取到"
+      return S.err
+        ? statebox('bad', '未获取到日志', S.err, [button('重试', function () { pull(true); }, 'pri')])
+        : statebox('empty', '暂无日志');
     }
     if (!S.filtered.length) {
       return statebox('empty', '无匹配日志');
@@ -799,7 +813,10 @@
     MOUNTED = false;
   }
 
-  var page = { id: PAGE_ID, title: '日志', mount: mount, unmount: unmount, render: mount };
+  var page = {
+    id: PAGE_ID, title: '日志', mount: mount, unmount: unmount, render: mount,
+    refresh: function () { return pull(false); }   // 壳的 F5 走就地刷新，保住缓冲与未读计数
+  };
   window.PrismPages = window.PrismPages || {};
   window.PrismPages[PAGE_ID] = page;
   try {

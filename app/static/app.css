@@ -27,7 +27,7 @@
   /* 状态：OpenAI 经典品牌绿 #10A37F，以及克制的红与黄 */
   --ok:#10A37F;   --okdim:#D1FAE5;   --okbg:#F0FDF4;
   --bad:#EF4444;  --baddim:#FEE2E2;  --badbg:#FEF2F2;
-  --warn:#F59E0B; --warndim:#FEF3C7; --warnbg:#FFFBEB;
+  --warn:#B45309; --warndim:#FEF3C7; --warnbg:#FFFBEB;
   --infobg:#F4F4F6;
 
   --grid:transparent;
@@ -123,7 +123,7 @@ a{color:inherit;text-decoration:none}
 .tabs{display:flex;align-items:center;gap:4px;margin-left:24px;height:var(--top-h)}
 /* 药丸式分段导航（选中＝浅灰填充），自然克制，对齐官方质感 */
 .tabs a{display:flex;align-items:center;padding:0 12px;height:32px;font-size:13px;font-weight:500;color:var(--fg2);
-        border-radius:var(--r-ctl);transition:all .14s cubic-bezier(.16,1,.3,1);cursor:default}
+        border-radius:var(--r-ctl);transition:all .14s cubic-bezier(.16,1,.3,1);cursor:pointer}
 .tabs a.on{color:var(--fg);background:var(--panel3);font-weight:600}
 .tabs a:hover{color:var(--fg);background:var(--hover)}
 .tabs a:active{transform:scale(.98)}
@@ -141,7 +141,7 @@ a{color:inherit;text-decoration:none}
       position:relative;z-index:100001;
       -webkit-user-select:none;user-select:none}
 .wbtn{width:46px;height:var(--top-h);display:grid;place-items:center;padding:0;
-      border:0;background:transparent;color:var(--fg2);cursor:default;
+      border:0;background:transparent;color:var(--fg2);cursor:pointer;
       position:relative;
       transition:all .14s cubic-bezier(.16,1,.3,1)}
 .wbtn svg{width:10px;height:10px;fill:none;stroke:currentColor;stroke-width:1}
@@ -253,7 +253,8 @@ body.is-maximized .win-resizer{display:none}
           padding:14px 16px;border-top:1px solid var(--line);background:var(--sunken)}
 .lvpick{display:flex;gap:6px;flex-wrap:wrap}
 .lv{font-family:var(--mono);font-size:11px;padding:4px 8px;border:1px solid var(--line2);
-    border-radius:var(--r-pill);color:var(--fg2);background:var(--panel);cursor:default;
+    border-radius:var(--r-pill);color:var(--fg2);background:var(--panel);cursor:pointer;
+    line-height:inherit;
     transition:all .14s cubic-bezier(.16,1,.3,1)}
 .lv.on{color:var(--fg);background:var(--accentdim);border-color:var(--line3);font-weight:500}
 .lv:hover{border-color:var(--line3);background:var(--hover)}
@@ -262,7 +263,8 @@ body.is-maximized .win-resizer{display:none}
      transition:all .14s cubic-bezier(.16,1,.3,1)}
 .del:hover{color:var(--bad);border-color:var(--baddim);background:var(--badbg)}
 /* 开关：现代灵动胶囊风格 */
-.sw2{display:inline-flex;align-items:center;gap:9px;cursor:default;user-select:none}
+.sw2{display:inline-flex;align-items:center;gap:9px;cursor:pointer;user-select:none;
+  font:inherit;background:none;border:0;padding:0;color:inherit;text-align:left}
 .sw2 i{width:32px;height:18px;border-radius:var(--r-pill);background:var(--line2);border:1px solid transparent;position:relative;transition:all .18s cubic-bezier(.16,1,.3,1)}
 .sw2 i::after{content:"";position:absolute;top:1px;left:1px;width:14px;height:14px;border-radius:50%;background:var(--panel);box-shadow:var(--knob-shadow);transition:transform .18s cubic-bezier(.16,1,.3,1)}
 .sw2.on i{background:var(--accent);border-color:var(--accent)}
@@ -274,7 +276,7 @@ body.is-maximized .win-resizer{display:none}
 .acts.wrap{flex-wrap:wrap}
 .btn{font-family:inherit;font-size:13px;font-weight:500;letter-spacing:0;padding:8px 14px;
      border-radius:var(--r-ctl);border:1px solid var(--line2);background:var(--panel);
-     color:var(--fg);cursor:default;display:inline-flex;align-items:center;justify-content:center;gap:7px;white-space:nowrap;
+     color:var(--fg);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:7px;white-space:nowrap;
      transition:all .16s cubic-bezier(.16,1,.3,1)}
 .btn:hover{background:var(--hover);border-color:var(--line3);transform:translateY(-0.5px)}
 .btn:active{transform:scale(.985) translateY(0)}
@@ -432,7 +434,7 @@ table.t .act .btn + .btn{margin-left:6px}
 .pal .in{padding:12px 16px;border-bottom:1px solid var(--line);background:var(--panel2);
          font-size:12px;color:var(--fg3);letter-spacing:0}
 .pal .it{display:flex;align-items:center;gap:10px;padding:9px 14px;font-size:13px;
-         color:var(--fg2);cursor:default;border-bottom:1px solid var(--line);transition:background .12s cubic-bezier(.16,1,.3,1)}
+         color:var(--fg2);cursor:pointer;border-bottom:1px solid var(--line);transition:background .12s cubic-bezier(.16,1,.3,1)}
 .pal .it:last-child{border-bottom:0}
 .pal .it .no{margin-left:auto;font-size:11.5px;color:var(--fg3);font-family:var(--mono)}
 .pal .it.on,.pal .it:hover{background:var(--hover);color:var(--fg)}
@@ -534,11 +536,10 @@ noscript .statebox{margin:40px auto;max-width:640px}
 
 /* 按天/按周、7d/30d/90d 切换 */
 .usage-page .u-seg{display:inline-flex;border:1px solid var(--line2);border-radius:var(--r-ctl);overflow:hidden;background:var(--panel2);padding:2px;gap:2px}
-.usage-page .u-seg span{font-size:12px;font-weight:500;padding:4px 10px;color:var(--fg2);
-  cursor:pointer;background:transparent;border-radius:5px;border-right:0;transition:all .14s cubic-bezier(.16,1,.3,1)}
-.usage-page .u-seg span:last-child{border-right:0}
-.usage-page .u-seg span.on{background:var(--panel);color:var(--fg);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.06)}
-.usage-page .u-seg span:hover{color:var(--fg)}
+.usage-page .u-seg button{font:inherit;font-size:12px;font-weight:500;padding:4px 10px;color:var(--fg2);
+  cursor:pointer;background:transparent;border:0;border-radius:5px;transition:all .14s cubic-bezier(.16,1,.3,1)}
+.usage-page .u-seg button.on{background:var(--panel);color:var(--fg);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.06)}
+.usage-page .u-seg button:hover{color:var(--fg)}
 
 /* 空态兜底。宿主给了 ctx.ui.empty 就用它的 .statebox，这几条只在没有宿主时兜着 */
 .usage-page .u-empty{border:1px solid var(--line);border-radius:var(--r-card);background:var(--sunken);
@@ -652,7 +653,7 @@ noscript .statebox{margin:40px auto;max-width:640px}
   transition:visibility 0s linear .18s}
 .graph .gnode.open > .gkids > .ginner{visibility:visible;transition-delay:0s}
 /* 树线 */
-.graph .ginner > .gtree{margin-left:11px;padding-left:14px;border-left:1px solid var(--line2)}
+.graph .ginner > .gtree{margin-left:16.5px;padding-left:14px;border-left:1px solid var(--line2)}
 .graph .ginner > .gtree > .gnode::before{content:'';position:absolute;left:-14px;top:18px;
   width:11px;border-top:1px solid var(--line2)}
 .graph .ginner > .gtree > .gnode:last-child{position:relative}

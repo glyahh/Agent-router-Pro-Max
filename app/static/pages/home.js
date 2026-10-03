@@ -315,7 +315,7 @@
       refreshBtn = h('button', {
         class: 'btn sm', type: 'button', disabled: !!S.busy,
         data: { role: 'sb-refresh' },
-        onclick: function () { reload(true); }
+        onclick: function () { confirmDiscard(refreshFromGateway); }
       }, '刷新');
 
       $stickyBar.appendChild(h('div', { class: 'sb-left' }, [badge]));
@@ -332,6 +332,24 @@
     }
   }
 
+  // 「刷新」在脏状态下会把未保存的改动无声覆盖掉，先问一句再走
+  function confirmDiscard(then) {
+    if (!isDirty()) { then(); return; }
+    if (!S.ctx || typeof S.ctx.dialog !== 'function') {
+      flash('warn', '有未保存的路由改动，请先保存或撤销。');
+      return;
+    }
+    S.ctx.dialog({
+      title: '有未保存的路由改动',
+      body: '刷新会用网关上的当前配置覆盖这些改动。',
+      okText: '丢弃并刷新',
+      cancelText: '继续编辑',
+      danger: true
+    }).then(function (ok) { if (ok) then(); });
+  }
+
+  function refreshFromGateway() { reload(true); }
+
   function renderActions() {
     if (_unmounted()) return;
     clear($acts);
@@ -347,7 +365,7 @@
       h('button', {
         class: 'btn pri', type: 'button', disabled: !!S.busy || !S.state, onclick: saveRouting
       }, S.busy ? spin() : '保存路由'),
-      h('button', { class: 'btn', type: 'button', disabled: !!S.busy, onclick: function () { reload(true); } }, '刷新'),
+      h('button', { class: 'btn', type: 'button', disabled: !!S.busy, onclick: function () { confirmDiscard(refreshFromGateway); } }, '刷新'),
       h('button', {
         class: 'btn', type: 'button', disabled: !!S.busy || !providerRows().length, onclick: testAll
       }, '测试全部来源'),
@@ -882,7 +900,8 @@
       renderActions();
     });
 
-    var headEl = h('span', {
+    var headEl = h('button', {
+      type: 'button',
       // 无头 = 该分组的主来源，它保留干净的模型 ID。给它明确的「主」标记
       class: 'ghead' + (head ? '' : ' none main'),
       title: head
@@ -1003,7 +1022,7 @@
 
   function sourceButtons(a, p) {
     var out = [h('button', {
-      class: 'gbtn', type: 'button', title: '向上游拉一次 /models（不发推理请求）',
+      class: 'gbtn', type: 'button', title: '向服务商拉一次 /models（不发推理请求）',
       disabled: !!S.testing[p.id],
       onclick: function (e) { e.stopPropagation(); runTest(p.id); }
     }, S.testing[p.id] ? '…' : '测试')];
@@ -1151,7 +1170,7 @@
     var body = h('div', { class: 'test-detail-box' }, [
       h('div', { class: 'note' }, [
         h('div', null, '来源 ID：' + pid + (p && p.label ? ' (' + p.label + ')' : '')),
-        h('div', null, '上游地址：' + (p ? p.base_url : '-')),
+        h('div', null, '来源地址：' + (p ? p.base_url : '-')),
         h('div', null, '状态码：' + (t.status || '无') + ' · 耗时：' + (t.elapsed_ms ? t.elapsed_ms + ' ms' : '无'))
       ]),
       h('pre', { class: 'test-detail-pre', text: rawJson }),
@@ -1447,7 +1466,7 @@
       placeholder: isCreate ? 'sk-…' : '留空表示不修改密钥' });
     keyIn.addEventListener('input', function () { f.api_key = keyIn.value.trim(); });
 
-    var dirIn = h('textarea', { rows: 3, placeholder: '点「拉取」从上游获取，或按行手填，每行一个模型 ID' });
+    var dirIn = h('textarea', { rows: 3, placeholder: '点「拉取」从服务商获取，或按行手填，每行一个模型 ID' });
     dirIn.value = f.dirText;
     dirIn.addEventListener('input', function () { f.dirText = dirIn.value; });
 
@@ -1499,27 +1518,39 @@
     cwIn.addEventListener('input', function () { m.cw = cwIn.value.trim(); });
 
     var chips = h('div', { class: 'lvpick' });
+    var dfltSel = h('select', { title: '默认推理等级（必须是上面勾选的档位之一）' });
+    // 芯片与默认下拉就地同步，不重建表单——否则正在输入的框会失焦丢字
+    function syncLevels() {
+      LEVELS.forEach(function (lv) {
+        var el = chipEls[lv];
+        if (!el) return;
+        var on = m.levels.indexOf(lv) >= 0;
+        el.className = 'lv' + (on ? ' on' : '') + (m.dflt === lv ? ' def' : '');
+        el.title = on ? (lv + '（已选' + (m.dflt === lv ? '，默认' : '') + '）') : (lv + '（点一下选中）');
+      });
+      clear(dfltSel);
+      dfltSel.appendChild(option('', m.levels.length ? '（不指定默认）' : '（先勾选档位）'));
+      m.levels.forEach(function (lv) { dfltSel.appendChild(option(lv, lv)); });
+      dfltSel.value = m.dflt || '';
+      dfltSel.disabled = !m.levels.length;
+    }
+    var chipEls = {};
     LEVELS.forEach(function (lv) {
-      var on = m.levels.indexOf(lv) >= 0;
-      chips.appendChild(h('span', {
-        class: 'lv' + (on ? ' on' : '') + (m.dflt === lv ? ' def' : ''),
-        title: on ? (lv + '（已选' + (m.dflt === lv ? '，默认' : '') + '）') : (lv + '（点一下选中）'),
+      chips.appendChild(h('button', {
+        type: 'button',
+        class: 'lv',
         onclick: function () {
           var at = m.levels.indexOf(lv);
           if (at >= 0) m.levels.splice(at, 1); else m.levels.push(lv);
           m.levels = LEVELS.filter(function (x) { return m.levels.indexOf(x) >= 0; });
           if (m.dflt && m.levels.indexOf(m.dflt) < 0) m.dflt = '';
-          renderForm();
+          syncLevels();
         }
       }, lv));
+      chipEls[lv] = chips.lastChild;
     });
-
-    var dfltSel = h('select', { title: '默认推理等级（必须是上面勾选的档位之一）' });
-    dfltSel.appendChild(option('', m.levels.length ? '（不指定默认）' : '（先勾选档位）'));
-    m.levels.forEach(function (lv) { dfltSel.appendChild(option(lv, lv)); });
-    dfltSel.value = m.dflt || '';
-    dfltSel.disabled = !m.levels.length;
-    dfltSel.addEventListener('change', function () { m.dflt = dfltSel.value; renderForm(); });
+    dfltSel.addEventListener('change', function () { m.dflt = dfltSel.value; syncLevels(); });
+    syncLevels();
 
     return h('div', { class: 'modelrow' },
       h('div', { class: 'f' }, h('label', null, '模型 ID'), idIn),
@@ -1549,10 +1580,10 @@
         S.busy = false;
         var models = normalizeModels(r);
         if (r && r.ok === false && !models.length) {
-          f.pulled = { ok: false, text: (r.message || '上游没返回模型') + (r.status ? '（HTTP ' + r.status + '）' : '') };
+          f.pulled = { ok: false, text: (r.message || '服务商没返回模型') + (r.status ? '（HTTP ' + r.status + '）' : '') };
           f.err = '拉取失败：' + f.pulled.text; renderForm(); return;
         }
-        if (!models.length) { f.pulled = { ok: false, text: (r && r.message) || '上游返回了 0 个模型' }; renderForm(); return; }
+        if (!models.length) { f.pulled = { ok: false, text: (r && r.message) || '服务商返回了 0 个模型' }; renderForm(); return; }
         fillPulled(models, (r && r.message) || '');
       })
       .catch(function (e) {

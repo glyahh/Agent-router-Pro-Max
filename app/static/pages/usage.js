@@ -75,7 +75,7 @@
     if (sec < 60) return '<1m 后重置';
     var m = Math.floor(sec / 60), h = Math.floor(m / 60), d = Math.floor(h / 24);
     if (d > 0) return d + 'd' + (h % 24) + 'h 后重置';
-    if (h > 0) return h + 'h' + pad2(m % 60) + 'm 后重置';
+    if (h > 0) return h + 'h' + (m % 60) + 'm 后重置';
     return m + 'm 后重置';
   }
 
@@ -291,8 +291,15 @@
     }
     var url = qs.length ? path + (path.indexOf('?') >= 0 ? '&' : '?') + qs.join('&') : path;
 
-    return fetch(url, { headers: { 'Accept': 'application/json' }, cache: 'no-store' }).then(function (res) {
+    // 兜底直连：带 15s 超时，否则"端口通但不回包"会让「读取中…」永不恢复
+    var ctl = (typeof AbortController === 'function') ? new AbortController() : null;
+    var timer = null;
+    var init = { headers: { 'Accept': 'application/json' }, cache: 'no-store' };
+    if (ctl) { init.signal = ctl.signal; timer = setTimeout(function () { ctl.abort(); }, 15000); }
+    function done() { if (timer) { clearTimeout(timer); timer = null; } }
+    return fetch(url, init).then(function (res) {
       return res.text().then(function (txt) {
+        done();
         var json = null;
         try { json = JSON.parse(txt); } catch (e) { /* 下面统一报错 */ }
         if (!json || typeof json !== 'object') {
@@ -302,7 +309,11 @@
         if (json.ok === false) throw new Error(json.error || ('请求失败 HTTP ' + res.status));
         if (!res.ok) throw new Error(json.error || ('请求失败 HTTP ' + res.status));
         return Object.prototype.hasOwnProperty.call(json, 'data') ? json.data : json;
-      });
+      }, function (e) { done(); throw e; });
+    }, function (e) {
+      done();
+      if (e && e.name === 'AbortError') throw new Error('控制台 15 秒没有响应，已中断。');
+      throw e;
     });
   }
 
@@ -632,7 +643,7 @@
         + '<td class="c" title="' + esc(maskSourceKey(c.source_key)) + '">' + esc(c.vendor || '—') + '</td>'
         + '<td class="c">' + statusChip(c) + '</td>'
         + '<td class="c n">' + c.success + '</td>'
-        + '<td class="c' + (c.failed ? ' u-bad' : '') + '">' + c.failed + '</td>'
+        + '<td class="c n' + (c.failed ? ' u-bad' : '') + '">' + c.failed + '</td>'
         + '<td class="c"' + (recent ? ' title="' + esc(recent.time) + '"' : '') + '>'
         + recentText + '</td>'
         + '</tr>';
@@ -660,13 +671,13 @@
     var byWeek = opts && opts.historyMode === 'week';
     var days = (opts && opts.days) || 7;
     var seg = '<span class="u-seg" data-role="histmode">'
-      + '<span data-v="day" class="' + (byWeek ? '' : 'on') + '">按天</span>'
-      + '<span data-v="week" class="' + (byWeek ? 'on' : '') + '">按周</span></span>';
+      + '<button type="button" data-v="day" class="' + (byWeek ? '' : 'on') + '">按天</button>'
+      + '<button type="button" data-v="week" class="' + (byWeek ? 'on' : '') + '">按周</button></span>';
     var rangeSeg = '<span class="u-seg" data-role="days">';
     var ranges = [7, 30, 90];
     for (var i = 0; i < ranges.length; i++) {
-      rangeSeg += '<span data-v="' + ranges[i] + '" class="' + (ranges[i] === days ? 'on' : '') + '">'
-        + ranges[i] + 'd</span>';
+      rangeSeg += '<button type="button" data-v="' + ranges[i] + '" class="' + (ranges[i] === days ? 'on' : '') + '">'
+        + ranges[i] + 'd</button>';
     }
     rangeSeg += '</span>';
 
@@ -716,8 +727,8 @@
           + '<td class="n">' + esc(cell) + '</td>'
           + '<td>' + esc(it2.label) + '</td>'
           + '<td class="c n">' + it2.success + '</td>'
-          + '<td class="c' + (it2.failed ? ' u-bad' : '') + '">' + it2.failed + '</td>'
-          + '<td class="c">' + (tot ? failRate + '%' : '—') + '</td>'
+          + '<td class="c n' + (it2.failed ? ' u-bad' : '') + '">' + it2.failed + '</td>'
+          + '<td class="c n">' + (tot ? failRate + '%' : '—') + '</td>'
           + '<td class="c"><span class="u-mini' + (failRate >= 10 ? ' hot' : '') + '"><i data-w="'
           + clampPct(Math.round(it2.success / peak * 100)) + '" style="--w:' + clampPct(Math.round(it2.success / peak * 100)) + '%"></i></span></td>'
           + '</tr>';
@@ -754,7 +765,8 @@
     timer: null,
     ticker: null,
     unmounted: true,
-    refreshing: false
+    refreshing: false,
+    refreshPending: false
   };
 
   // 外壳的内部结构。拆成两层是因为宿主可能直接把外壳本身当容器传进来，
@@ -913,7 +925,9 @@
   }
 
   function refresh() {
-    if (state.unmounted || state.refreshing) return Promise.resolve();
+    if (state.unmounted) return Promise.resolve();
+    // 飞行中再点：记一笔，等当前请求收尾后补发，别把用户的区间切换吞掉
+    if (state.refreshing) { state.refreshPending = true; return Promise.resolve(); }
     state.refreshing = true;
     var btn = state.root && state.root.querySelector('[data-role="refresh"]');
     if (btn) { btn.textContent = '读取中…'; btn.setAttribute('disabled', '1'); }
@@ -930,6 +944,7 @@
       .then(function () {
         state.refreshing = false;
         if (btn) { btn.textContent = '刷新'; btn.removeAttribute('disabled'); }
+        if (state.refreshPending) { state.refreshPending = false; refresh(); return; }
         if (state.unmounted) return;
         scheduleRender();
       });
@@ -951,7 +966,11 @@
       scheduleRender();
     } else if (segRole === 'days') {
       var n = Number(v);
-      if (n !== state.days) { state.days = n; refresh(); }
+      if (n !== state.days) {
+        state.days = n;
+        scheduleRender();   // 高亮先跟上，别等请求回来才动
+        refresh();
+      }
     }
   }
 
@@ -1078,7 +1097,8 @@
         ctx.onUnmount(function () { UsagePage.unmount(); });
       }
 
-      if (state.data) render(); else { render(); refresh(); }
+      render();
+      refresh();
       return UsagePage;
     },
 

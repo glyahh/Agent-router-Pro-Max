@@ -36,7 +36,7 @@
     {
       id: 'g-proxy', scope: 'gateway', key: 'proxy_url', kind: 'text', mono: true,
       placeholder: 'http://127.0.0.1:7897',
-      label: '上游代理',
+      label: '网关代理',
       hint: ''
     },
     {
@@ -443,7 +443,7 @@
       clearBanner();
       banner = h('div', { class: 'ps-banner' }, [
         h('div', { class: 't', text: title }),
-        h('div', { class: 'm', text: message })
+        h('div', { class: 'm' }, message)
       ]);
       if (actions && actions.length) {
         banner.appendChild(h('div', { class: 'a' }, actions));
@@ -722,7 +722,9 @@
     root.appendChild(advSec);
 
     /* ── 载入 ───────────────────────────────────────────── */
+    var loadSeq = 0;   // 连点「重新读取」时只认最新一次响应，旧结果不许覆盖新结果
     function load() {
+      var seq = ++loadSeq;
       loaded = false;
       loadFailed = false;
       loadEmpty = false;
@@ -732,7 +734,7 @@
       setStatusAll('idle', '');
       refreshSummary();
       return transport.get('/api/settings').then(function (data) {
-        if (!alive) return;
+        if (!alive || seq !== loadSeq) return;
         loaded = true;
         if (!data || (!data.gateway && !data.app)) {
           loaded = false;
@@ -755,7 +757,9 @@
             if (sc) degradedScope[sc] = true;
           });
           showBanner('部分设置读不到',
-            notes.map(function (n) { return degradeLine(n, data); }).join('　'), [
+            h('div', null, notes.map(function (n) {
+              return h('div', { text: degradeLine(n, data) });
+            })), [
             h('button', { class: 'btn', type: 'button', text: '重新读取', onclick: load }),
             h('a', { class: 'btn ps-btn', href: ADVANCED_URL, target: '_blank', rel: 'noopener noreferrer', text: '打开官方面板' })
           ]);
@@ -763,7 +767,7 @@
         setStatusAll('idle', '');
         refreshSummary();
       }, function (err) {
-        if (!alive) return;
+        if (!alive || seq !== loadSeq) return;
         var msg = (err && err.message) || String(err);
         loaded = false;
         loadFailed = true;

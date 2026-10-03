@@ -207,7 +207,8 @@
     paused: false,
     failStreak: 0,
     offBus: null,
-    timer: null
+    timer: null,
+    fingerprint: null
   };
 
   /* ── 渲染 ───────────────────────────────────────────────────── */
@@ -249,10 +250,15 @@
 
   // 开关：照 app.css 的 .sw2 结构（设置页那套），不用原生复选框
   function sw2(label, on, onchange) {
-    var box = h('span', { class: 'sw2' + (on ? ' on' : ''), title: label }, [h('i'), h('b', { text: label })]);
+    var box = h('button', {
+      class: 'sw2' + (on ? ' on' : ''), type: 'button', title: label
+    }, [h('i'), h('b', { text: label })]);
+    box.setAttribute('role', 'switch');
+    box.setAttribute('aria-checked', on ? 'true' : 'false');
     box.addEventListener('click', function () {
       on = !on;
       box.classList.toggle('on', on);
+      box.setAttribute('aria-checked', on ? 'true' : 'false');
       onchange(on);
     });
     return box;
@@ -300,7 +306,7 @@
       if (srcs[i] && srcs[i].enabled === true) activeCount++;
     }
     var card3 = h('div', { class: 'metric-card' }, [
-      h('div', { class: 'm-head' }, [h('span', { text: '活跃通道' })]),
+      h('div', { class: 'm-head' }, [h('span', { text: '活跃来源' })]),
       h('div', { class: 'm-val', text: activeCount + ' / ' + srcs.length })
     ]);
 
@@ -412,7 +418,7 @@
       body.appendChild(h('div', { class: 'model-vault' }, [vaultHead, vaultBody]));
     }
 
-    var sec = section('路由通道', null, body);
+    var sec = section('路由', null, body);
     if (blind && reason) sec.insertBefore(notice('warn', '当前路由无法判定：', reason), sec.lastChild);
     return sec;
   }
@@ -459,8 +465,8 @@
       ];
     });
 
-    var empty = statebox('empty', '暂无上游来源', '请在首页添加来源。');
-    var sec = section('上游来源', null,
+    var empty = statebox('empty', '暂无来源', '请在首页添加来源。');
+    var sec = section('来源', null,
       h('div', null, [
         table([
           { t: '来源' },
@@ -480,8 +486,15 @@
   /* ── 取数 ───────────────────────────────────────────────────── */
   function apiGet(path) {
     if (S.ctx && S.ctx.api && typeof S.ctx.api.get === 'function') return S.ctx.api.get(path);
-    return fetch(path, { headers: { 'Accept': 'application/json' }, cache: 'no-store' }).then(function (r) {
+    // 兜底直连：带 15s 超时，否则"端口通但不回包"会让刷新按钮永久卡在禁用态
+    var ctl = (typeof AbortController === 'function') ? new AbortController() : null;
+    var timer = null;
+    var init = { headers: { 'Accept': 'application/json' }, cache: 'no-store' };
+    if (ctl) { init.signal = ctl.signal; timer = setTimeout(function () { ctl.abort(); }, 15000); }
+    function done() { if (timer) { clearTimeout(timer); timer = null; } }
+    return fetch(path, init).then(function (r) {
       return r.text().then(function (t) {
+        done();
         var body = null;
         try { body = t ? JSON.parse(t) : null; } catch (e) { body = null; }
         if (body && typeof body === 'object' && 'ok' in body) {
@@ -491,8 +504,12 @@
         if (!r.ok) throw new Error('请求失败：HTTP ' + r.status);
         if (body === null) throw new Error('后端返回了无法解析的内容');
         return body;
-      });
-    }, function () { throw new Error('连不上控制台服务。确认 8318 上的 Prism 服务在运行。'); });
+      }, function (e) { done(); throw e; });
+    }, function (e) {
+      done();
+      if (e && e.name === 'AbortError') throw new Error('控制台 15 秒没有响应，已中断。');
+      throw new Error('连不上控制台服务。确认 8318 上的 Prism 服务在运行。');
+    });
   }
 
   // 有壳在轮询时，本页只做"点刷新"这一次额外请求
@@ -539,6 +556,12 @@
       S.err = S.ctx && S.ctx.state ? shortErr(S.ctx.state.monitorError) : '壳的轮询失败';
       if (/封禁|banned/i.test(S.err)) S.paused = true;
     }
+    // 轮询内容没变就不重建：否则每 5 秒一次 render 会拉回表格滚动位置、清掉悬停与选中
+    var fp;
+    try { fp = JSON.stringify(m === undefined ? null : m) + '\u0000' + (S.err || ''); }
+    catch (e) { fp = null; }
+    if (fp !== null && fp === S.fingerprint) return;
+    S.fingerprint = fp;
     render();
   }
 
@@ -577,7 +600,10 @@
     MOUNTED = false;
   }
 
-  var page = { id: PAGE_ID, title: '监控', mount: mount, unmount: unmount, render: mount };
+  var page = {
+    id: PAGE_ID, title: '监控', mount: mount, unmount: unmount, render: mount,
+    refresh: function () { return load(false); }   // 壳的 F5 走就地刷新，不整页重挂载
+  };
   window.PrismPages = window.PrismPages || {};
   window.PrismPages[PAGE_ID] = page;
   // 壳的注册口（app.js 在解析阶段就挂上了）；两个都认，谁的壳都能起来

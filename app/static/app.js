@@ -842,6 +842,8 @@
     var filtered = [];
     var cursor = 0;
 
+    var prevFocus = document.activeElement;   // 关闭时把手柄还回打开前的元素
+
     var inp = h('input', {
       type: 'search',
       class: 'pal-inp',
@@ -932,6 +934,11 @@
     function onKey(e) {
       if (e.isComposing || e.keyCode === 229) return;
       if (e.key === 'Escape') { e.preventDefault(); close(); }
+      else if (e.key === 'Tab') {
+        // 面板里只有搜索框可聚焦：Tab 圈在面板内，别漏到遮罩后面的页面上
+        e.preventDefault();
+        inp.focus();
+      }
       else if (e.key === 'ArrowDown') {
         if (!filtered.length) return;
         e.preventDefault(); cursor = (cursor + 1) % filtered.length; mark();
@@ -948,6 +955,9 @@
     function close() {
       document.removeEventListener('keydown', onKey, true);
       if (bd.parentNode) bd.parentNode.removeChild(bd);
+      if (prevFocus && typeof prevFocus.focus === 'function') {
+        try { prevFocus.focus(); } catch (err) {}
+      }
     }
 
     bd.addEventListener('mousedown', function (e) { if (e.target === bd) close(); });
@@ -1202,8 +1212,7 @@
   function missingPanel(info, err) {
     var box = ui.empty(
       '页面加载失败',
-      '未能加载 <b>' + info.file + '</b> 模块。<br>' +
-      '错误信息：' + api.shortErr(err),
+      '未能加载 ' + info.file + ' 模块。错误信息：' + api.shortErr(err),
       [ui.button('重试', function () { route(true); }, 'pri')]
     );
     return box;
@@ -1765,9 +1774,6 @@
       // 4. 同步触发状态灯轮询与主题轮询
       poll();
       pollTheme();
-
-      // 5. 轻量平滑微提示反馈
-      toast('数据已刷新', 'ok');
     }
 
     document.addEventListener('keydown', function (e) {
