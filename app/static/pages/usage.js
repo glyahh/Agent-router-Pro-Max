@@ -121,7 +121,7 @@
     return cred.length > 6 ? '…' + cred.slice(-6) : '…';
   }
 
-  // 样板把长邮箱截成 "user…@163.com"
+  // 样板把长邮箱截成 "user…@example.com"
   function shortAccount(a) {
     var s = String(a || '');
     var at = s.indexOf('@');
