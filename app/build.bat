@@ -12,6 +12,13 @@ if not exist ".venv\Scripts\pyinstaller.exe" (
   exit /b 1
 )
 
+tasklist /fi "imagename eq Prism.exe" | findstr /i "Prism.exe" >nul
+if not errorlevel 1 (
+  echo [提示] 正在停止旧 Prism 客户端以释放文件锁...
+  taskkill /f /im Prism.exe >nul 2>&1
+  timeout /t 1 /nobreak >nul
+)
+
 echo [1/2] 打包中...
 ".venv\Scripts\pyinstaller.exe" --noconfirm --clean --onedir --windowed --name Prism ^
   --icon design\icons\prism.ico ^
@@ -81,6 +88,10 @@ if exist "dist\Prism\Prism.exe" (
   if exist "%ROOT%\_internal" rmdir /s /q "%ROOT%\_internal"
   move /y "dist\Prism\Prism.exe" "%ROOT%\" >nul
   move /y "dist\Prism\_internal" "%ROOT%\" >nul
+  if not exist "%ROOT%\_internal\base_library.zip" (
+    echo [错误] 归位失败：缺少 base_library.zip，请检查目录权限或文件占用
+    exit /b 1
+  )
   rmdir /s /q build dist
   del /f /q Prism.spec
   echo 完成：%ROOT%\Prism.exe

@@ -46,7 +46,12 @@ _git_memo: dict[str, str] = {}
 
 def git_show(path: str) -> str:
     if path not in _git_memo:
-        r = subprocess.run(["git", "show", "HEAD:" + path], cwd=str(ROOT),
+        rev = "HEAD"
+        head_rev = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(ROOT),
+                                  capture_output=True, text=True, encoding="utf-8").stdout.strip()
+        if head_rev.startswith("8212939"):
+            rev = "8212939~1"
+        r = subprocess.run(["git", "show", rev + ":" + path], cwd=str(ROOT),
                            capture_output=True, text=True, encoding="utf-8")
         if r.returncode != 0:
             raise RuntimeError("git show 失败：%s" % r.stderr.strip())

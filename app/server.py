@@ -521,7 +521,10 @@ def _gateway_read(endpoint: str, kind: str):
 
 
 def _gateway_write(endpoint: str, field: str, value) -> None:
-    bridge.gateway_put(endpoint, {field: value})
+    try:
+        bridge.gateway_put(endpoint, {'value': value})
+    except (RouteError, sampling.SamplingError):
+        bridge.gateway_put(endpoint, {field: value})
 
 
 def settings_payload(include_gateway: bool = True) -> dict:
@@ -587,7 +590,10 @@ def apply_settings(body: dict) -> dict:
         want = _as_bool(incoming_gw[key]) if kind == 'bool' else (
             _as_int(incoming_gw[key]) if kind == 'int' else str(incoming_gw[key] or ''))
         try:
-            _current, field = _gateway_read(endpoint, kind)
+            current, field = _gateway_read(endpoint, kind)
+            if current == want:
+                gateway[key] = current
+                continue
             _gateway_write(endpoint, field, want)
             actual, _field = _gateway_read(endpoint, kind)
             if actual != want:
@@ -596,7 +602,10 @@ def apply_settings(body: dict) -> dict:
                 continue
             gateway[key] = actual
         except (RouteError, sampling.SamplingError) as exc:
-            failures.append('%s：%s' % (key, exc))
+            if want != stored.get('gateway', {}).get(key):
+                failures.append('%s：%s' % (key, exc))
+            else:
+                gateway[key] = stored.get('gateway', {}).get(key)
 
     try:
         write_settings({'gateway': gateway, 'app': app})

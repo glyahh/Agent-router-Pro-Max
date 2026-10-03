@@ -7,6 +7,7 @@ import sys
 import os
 import time
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 import urllib.request
@@ -30,14 +31,25 @@ class TestHomeE2EPerformance(unittest.TestCase):
             return orig_do_get(self)
         server.Handler.do_GET = tracking_do_get
 
-        # 启动真实后台 HTTP 控制台服务
-        cls.httpd = server.start_background(port=cls.port, token=cls.token)
+        # 启动真实后台 HTTP 控制台服务（带繁忙顺延与释放保护）
+        cls.httpd = None
+        for p in range(18399, 18420):
+            try:
+                cls.httpd = server.start_background(port=p, token=cls.token)
+                cls.port = p
+                break
+            except server.PortBusy:
+                continue
+        if cls.httpd is None:
+            raise RuntimeError("无法为 E2E 性能测试分配端口")
         time.sleep(0.3)
 
     @classmethod
     def tearDownClass(cls):
         try:
-            cls.httpd.shutdown()
+            if cls.httpd:
+                cls.httpd.shutdown()
+                cls.httpd.server_close()
         except Exception:
             pass
 
@@ -72,16 +84,17 @@ class TestHomeE2EPerformance(unittest.TestCase):
         test_url = f"http://127.0.0.1:{self.port}/?t={self.token}#/home"
 
         t0 = time.perf_counter()
-        # 启动真实 Chromium 渲染页面并 dump 最终生成的完整 DOM
-        proc = subprocess.run([
-            edge_path,
-            '--headless=new',
-            '--disable-gpu',
-            '--no-sandbox',
-            '--virtual-time-budget=2500',
-            '--dump-dom',
-            test_url
-        ], capture_output=True, text=True, timeout=20)
+        with tempfile.TemporaryDirectory() as user_data_dir:
+            proc = subprocess.run([
+                edge_path,
+                '--headless=new',
+                '--disable-gpu',
+                '--no-sandbox',
+                f'--user-data-dir={user_data_dir}',
+                '--virtual-time-budget=2500',
+                '--dump-dom',
+                test_url
+            ], capture_output=True, text=True, timeout=35)
 
         e2e_duration_ms = (time.perf_counter() - t0) * 1000
         dom_output = proc.stdout

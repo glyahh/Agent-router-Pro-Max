@@ -48,3 +48,7 @@ __pycache__/
 .route_selector.lock.tmp
 # zcode 会话的计划文件，过程产物
 .zcode/
+# mimosa 安全扫描插件的运行状态与历史
+.mimosa/
+# video2code 插件的缓存路径
+.v2c/
