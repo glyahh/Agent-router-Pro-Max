@@ -52,3 +52,16 @@ __pycache__/
 .mimosa/
 # video2code 插件的缓存路径
 .v2c/
+
+# ── 本机状态：程序运行时会重新生成，不进版本库 ────────────────────
+# 这些含本机真实来源与端点，首次启动 / 保存路由时由程序自己写出来
+routing-plan.json
+route_selector.lock
+app/route_selector.lock
+provider-inventory.json
+provider-preconfiguration-verification.json
+verification.json
+deployment.json
+codex-model-catalog.json
+# AI 协作过程产物（含本机路径与内部讨论）
+.agents/
