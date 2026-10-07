@@ -165,6 +165,142 @@ check('存量配置静态检查通过', S.plan_head_conflicts(provs), [])
 print('  模拟"gpt 组两个无头同时启用"能拦下来: %r'
       % (any_msg(S.plan_head_conflicts(provs, {'openai-official', 'proxyhub'}), '没有渠道头'),))
 
+print('== 按代理端分开的渠道头 ==')
+import copy
+import route_selector as rs
+
+row = {'id': 'srapi', 'label': 'SRAPI', 'group': 'gpt', 'head': 'old',
+       'expose': ['gpt-5.6-sol']}
+split = {'providers': [row], 'agent_heads': {'codex': {'srapi': 'gly'}}}
+check('Codex 用自己设的头', S.effective_head(split, 'codex', row), 'gly')
+check('没设过的 Claude Code 回落行上的头', S.effective_head(split, 'claude-code', row), 'old')
+shared = {'providers': [row], 'agent_heads': {'claude-code': {'srapi': ''}}}
+check('桌面端和 Claude Code 共用一份', S.effective_head(shared, 'claude-code-desktop', row), '')
+check('空字符串是主，不再回落行上的头', S.effective_head(shared, 'claude-code', row), '')
+try:
+    S.head_owner('copilot-agent')
+    check_true('Copilot Agent 不存渠道头', False)
+except S.RouteError as e:
+    check_true('Copilot Agent 不存渠道头', '不使用渠道头' in str(e))
+
+same = [{'id': 'srapi', 'group': 'gpt', 'head': 'old', 'expose': ['gpt-5.6-sol']}]
+ok_heads = {'codex': {'srapi': 'gly'}, 'claude-code': {'srapi': ''}}
+check('同一来源两个代理端不同头可以通过',
+      S.plan_head_conflicts(same, {'srapi'}, ok_heads), [])
+both_gly = {'codex': {'srapi': 'gly'}, 'opencode': {'srapi': 'gly'}}
+check('同一来源在多个代理端用同一个头可以通过',
+      S.plan_head_conflicts(same, {'srapi'}, both_gly), [])
+two_src = [
+    {'id': 'a', 'group': 'gpt', 'head': '', 'expose': ['m']},
+    {'id': 'b', 'group': 'deepseek', 'head': '', 'expose': ['n']},
+]
+check_true('两个来源抢同一个头被拦',
+           any_msg(S.plan_head_conflicts(two_src, None, {'codex': {'a': 'gly'}, 'claude-code': {'b': 'gly'}}),
+                   '必须唯一'))
+
+mains = [
+    {'id': 'openai-official', 'group': 'gpt', 'head': '', 'expose': ['gpt-5.6-sol']},
+    {'id': 'srapi', 'group': 'gpt', 'head': 'srapi', 'expose': ['gpt-5.6-sol']},
+]
+user_rows = [
+    {'id': 'openai-official', 'group': 'gpt', 'head': '', 'expose': ['gpt-6.1-sol']},
+    {'id': 'srapi', 'group': 'gpt', 'head': '', 'expose': ['gpt-6.1-sol']},
+]
+user_heads = {'codex': {'srapi': 'gly'}}
+check('只算已接入的 Codex：主和 gly 不冲突',
+      S.plan_head_conflicts(user_rows, {'openai-official', 'srapi'}, user_heads, {'codex'}), [])
+check_true('Claude Code 也接入时仍拦两个无头',
+           any_msg(S.plan_head_conflicts(user_rows, {'openai-official', 'srapi'}, user_heads,
+                                         {'codex', 'claude-code'}),
+                   'Claude Code'))
+check_true('没传接入名单时仍查全部代理端',
+           any_msg(S.plan_head_conflicts(user_rows, {'openai-official', 'srapi'}, user_heads),
+                   'Claude Code'))
+check('只算已接入时网关只写 Codex 的头',
+      rs._gateway_heads({'agent_heads': user_heads}, user_rows[1], {'codex'}), ['gly'])
+check('没传名单时没设过的代理端回落成无头',
+      rs._gateway_heads({'agent_heads': user_heads}, user_rows[1]), ['gly', ''])
+
+clash = S.plan_head_conflicts(mains, {'openai-official', 'srapi'}, {'claude-code': {'srapi': ''}})
+clash_text = '；'.join(clash)
+check_true('两个主撞同一个模型 ID 被拦', '同时暴露' in clash_text)
+check_true('撞车文案点明两个代理端', 'Codex' in clash_text and 'Claude Code' in clash_text)
+check_true('撞车文案点明两家来源', 'openai-official' in clash_text and 'srapi' in clash_text)
+print('        -> ' + (clash[0] if clash else '(none)'))
+
+alias = 'gpt-5.6-sol'
+src = {'id': 'srapi', 'label': 'SRAPI', 'group': 'gpt', 'section': 'openai-compatibility',
+       'base_url': 'https://srapi.example/v1', 'tag': 'srapi', 'head': 'old',
+       'expose': [alias], 'available': [{'name': alias, 'alias': alias}], 'models': []}
+cfg = {'codex-api-key': [], 'openai-compatibility': [{
+    'base-url': src['base_url'], 'headers': {'X-Route-Tag': 'srapi'},
+    'models': [], 'api-key': 'k'}]}
+sel = {'gpt': ['srapi'], 'deepseek': [], 'glm': []}
+alone = rs.build_config(cfg, {'providers': [src]}, sel)
+check('没有 agent_heads 时仍只写行上的一个头',
+      [m['alias'] for m in alone['openai-compatibility'][0]['models']], ['old/' + alias])
+both = rs.build_config(cfg, {'providers': [src], 'agent_heads': ok_heads}, sel)
+written = both['openai-compatibility'][0]['models']
+check('各代理端的头都写成 alias，没设过的仍用行上的头',
+      sorted(m['alias'] for m in written), sorted([alias, 'gly/' + alias, 'old/' + alias]))
+check('这些 alias 的上游名相同', len(written) > 1 and len({m['name'] for m in written}) == 1, True)
+
+box = {'plan': {'providers': [dict(src, head='old')]}}
+orig_io = (S._read_plan, S._write_plan, S._gw_get, S._enabled_ids)
+S._read_plan = lambda: copy.deepcopy(box['plan'])
+S._write_plan = lambda p: box.__setitem__('plan', p)
+S._gw_get = lambda *a, **k: {}
+S._enabled_ids = lambda config, plan: {'srapi'}
+try:
+    saved = S.set_head('srapi', 'gly', 'codex')
+    check('set_head 记下的是代理端', saved['agent'], 'codex')
+    check('行上的 head 不被改掉', box['plan']['providers'][0]['head'], 'old')
+    check('只写入 Codex', box['plan']['agent_heads']['codex']['srapi'], 'gly')
+    check('Claude Code 的有效头不变',
+          S.effective_head(box['plan'], 'claude-code', box['plan']['providers'][0]), 'old')
+    S.set_head('srapi', '', 'claude-code-desktop')
+    check('桌面端写到 claude-code', box['plan']['agent_heads']['claude-code']['srapi'], '')
+    check('桌面端那一笔没有盖掉 Codex', box['plan']['agent_heads']['codex']['srapi'], 'gly')
+    before = copy.deepcopy(box['plan'])
+    try:
+        S.set_head('srapi', 'x', 'copilot-agent')
+        check_true('Copilot Agent 的 set_head 被拒', False)
+    except S.RouteError as e:
+        check_true('Copilot Agent 的 set_head 被拒', '不使用渠道头' in str(e))
+    check('拒绝之后 plan 不变', box['plan'], before)
+finally:
+    S._read_plan, S._write_plan, S._gw_get, S._enabled_ids = orig_io
+
+clash_box = {'plan': {'providers': [
+    {'id': 'openai-official', 'group': 'gpt', 'head': '', 'expose': ['gpt-5.6-sol']},
+    {'id': 'srapi', 'group': 'gpt', 'head': 'srapi', 'expose': ['gpt-5.6-sol']},
+]}}
+S._read_plan = lambda: copy.deepcopy(clash_box['plan'])
+S._write_plan = lambda p: clash_box.__setitem__('plan', p)
+S._gw_get = lambda *a, **k: {}
+S._enabled_ids = lambda config, plan: {'openai-official', 'srapi'}
+# 钉住「已接入」，不读本机 Claude 配不配置。这个用例要的就是 Claude Code 在接入名单里。
+orig_live = S._live_head_agents
+S._live_head_agents = lambda: {'claude-code', 'codex'}
+try:
+    frozen = copy.deepcopy(clash_box['plan'])
+    try:
+        S.set_head('srapi', '', 'claude-code')
+        check_true('两个主撞车时 set_head 拒绝', False)
+    except S.RouteError as e:
+        check_true('两个主撞车时 set_head 拒绝', '同时暴露' in str(e))
+        check_true('拒绝文案点明代理端和来源',
+                   'Claude Code' in str(e) and 'openai-official' in str(e))
+    check('撞车拒绝后 plan 不改', clash_box['plan'], frozen)
+    # Claude Code 没接入时，给它写成主不影响已接入的 Codex（行上头仍是 srapi）。
+    S._live_head_agents = lambda: {'codex'}
+    saved_off = S.set_head('srapi', '', 'claude-code')
+    check('没接入的代理端改成主可以记下', saved_off['head'], '')
+    check('记下的是 claude-code', clash_box['plan']['agent_heads']['claude-code']['srapi'], '')
+finally:
+    S._live_head_agents = orig_live
+    S._read_plan, S._write_plan, S._gw_get, S._enabled_ids = orig_io
+
 print()
 print('RESULT: %s (%d failed)' % ('ALL PASS' if not fails else 'FAILURES', len(fails)))
 for f in fails:

@@ -163,6 +163,8 @@ app.js 首次读到后存进 sessionStorage（不进历史记录），之后每�
 | 路径 | 转调 |
 |---|---|
 | `/api/logs` | `clear_logs()` |
+| `/api/error-logs` | `delete_error_logs()` → `{"deleted": [name...], "failed": [name...]}`，只删 `error-*.log` |
+| `/api/error-logs/{name}` | `delete_error_log(name)` → `{"deleted": name}`，名字必须是 `error-*.log` |
 | `/api/sources/{id}` | `sources.delete_source(id)` → `{"deleted": id}` |
 
 ### OPTIONS

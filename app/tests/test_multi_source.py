@@ -143,6 +143,93 @@ try:
 except rs.RouteError:
     check_true('非法形状抛错', True)
 
+# ─────────────────────────────────────────────── selection_of / row_states / snapshot
+
+# 现场：Command Code Goat 在 plan 里是**两行**（DEEPSEEK 与 GLM 各一行）但共用一个
+# config 条目（同一端点、同一把密钥）。用户取消 DEEPSEEK 那一行的勾选、保存之后，
+# 它必须保持未勾选——而旧实现从条目反推，会把两行一起点亮。
+print('== selection_of：plan 顶层的行级选择 ==')
+shared_plan = {'providers': [
+    {'id': 'goat', 'label': 'Command Code Goat', 'group': 'deepseek',
+     'section': 'openai-compatibility', 'base_url': 'https://c.example/v1'},
+    {'id': 'goat-glm', 'label': 'Command Code Goat', 'group': 'glm',
+     'section': 'openai-compatibility', 'base_url': 'https://c.example/v1'},
+    {'id': 'opencode', 'label': 'Opencode', 'group': 'deepseek',
+     'section': 'codex-api-key', 'base_url': 'https://d.example/v1', 'tag': 't-d'},
+]}
+check('旧 plan（没有 selected）-> None（读路径回退老口径）', rs.selection_of(shared_plan), None)
+check('正常形状按分组归一', rs.selection_of(dict(shared_plan, selected={
+    'gpt': [], 'deepseek': ['opencode'], 'glm': ['goat-glm']})),
+    {'deepseek': ['opencode'], 'glm': ['goat-glm']})
+check('老前端字符串形状照收', rs.selection_of(dict(shared_plan, selected={
+    'gpt': None, 'deepseek': 'opencode', 'glm': 'goat-glm'})),
+    {'deepseek': ['opencode'], 'glm': ['goat-glm']})
+check('引用已删 id 被丢掉、不抛', rs.selection_of(dict(shared_plan, selected={
+    'gpt': [], 'deepseek': ['opencode', 'ghost'], 'glm': ['goat-glm']})),
+    {'deepseek': ['opencode'], 'glm': ['goat-glm']})
+check('selected 不是对象 -> None（回退老口径，不当成"什么都没选"）',
+      rs.selection_of(dict(shared_plan, selected=['x'])), None)
+check('某组形状非法 -> None（同上）',
+      rs.selection_of(dict(shared_plan, selected={'deepseek': 5})), None)
+
+print('== row_states：共享凭据的多行按用户选择逐行判定 ==')
+shared_cfg = {'openai-compatibility': [
+    {'name': 'Command Code (Goat)', 'base-url': 'https://c.example/v1',
+     'api-key-entries': [{'api-key': 'k-c'}], 'models': []},
+], 'codex-api-key': [
+    {'api-key': 'k-d', 'base-url': 'https://d.example/v1',
+     'headers': {'X-Route-Tag': 't-d'}, 'models': []},
+]}
+rows = shared_plan['providers']
+states, failures = rs.row_states(shared_cfg, rows)
+check('旧口径（无 selection）：凭据启用 -> 两行都算生效',
+      sorted(k for k, v in states.items() if v), ['goat', 'goat-glm', 'opencode'])
+check('旧口径没有失败行', failures, {})
+states, _ = rs.row_states(shared_cfg, rows,
+                          {'gpt': [], 'deepseek': ['opencode'], 'glm': ['goat-glm']})
+check('有 selection：未选中的 goat 不再算生效',
+      sorted(k for k, v in states.items() if v), ['goat-glm', 'opencode'])
+check('有 selection：被取消的那一行明确是 False', states.get('goat'), False)
+states, _ = rs.row_states(shared_cfg, rows, {'gpt': [], 'deepseek': [], 'glm': []})
+check('桶内一行都没选（外部漂移）-> 按 config 反推，仍算生效',
+      sorted(k for k, v in states.items() if v), ['goat', 'goat-glm', 'opencode'])
+disabled_cfg = {'openai-compatibility': [
+    {'name': 'Command Code (Goat)', 'base-url': 'https://c.example/v1',
+     'api-key-entries': [{'api-key': 'k-c'}], 'disabled': True, 'models': []},
+], 'codex-api-key': []}
+states, failures = rs.row_states(disabled_cfg, rows,
+                                 {'gpt': [], 'deepseek': ['opencode'], 'glm': ['goat-glm']})
+check('凭据停用 -> 桶内行一律不生效（config 是硬约束）',
+      sorted(k for k, v in states.items() if v), [])
+check('同一份 config 下找不到条目的行进 failures',
+      sorted(failures), ['opencode'])
+check('条目在、只是停用 -> 明确 False（不是"不知道"）',
+      states, {'goat': False, 'goat-glm': False})
+
+print('== snapshot：共享凭据下未选中的行不再跟着亮（沙箱 ROOT）==')
+snap_tmp = Path(tempfile.mkdtemp(prefix='prism-snap-'))
+try:
+    snap_plan = dict(shared_plan, selected={'gpt': [], 'deepseek': ['opencode'], 'glm': ['goat-glm']})
+    (snap_tmp / 'routing-plan.json').write_text(
+        json.dumps(snap_plan, ensure_ascii=False), encoding='utf-8')
+    _snap_orig = (rs.ROOT, rs.api, rs.fetch_all)
+    rs.ROOT = snap_tmp
+    rs.api = lambda path, method='GET', data=None: (
+        shared_cfg if path == '/v0/management/config' else {'data': []})
+    rs.fetch_all = lambda p, c: {x['id']: {'available': [], 'fetch_error': None, 'expose': []}
+                                 for x in p['providers']}
+    try:
+        snap = rs.snapshot()
+    finally:
+        rs.ROOT, rs.api, rs.fetch_all = _snap_orig
+    check('selected.deepseek 只有 opencode（goat 不再被条目拉亮）',
+          snap['selected']['deepseek'], ['opencode'])
+    check('selected.glm 仍是 goat-glm（它确实被选中）',
+          snap['selected']['glm'], ['goat-glm'])
+    check('坏行/未知行都没有', snap['unreadable'], [])
+finally:
+    shutil.rmtree(snap_tmp, ignore_errors=True)
+
 # ─────────────────────────────────────────────────── regen_catalog（沙箱）
 
 print('== regen_catalog（沙箱 ROOT，不碰生产）==')

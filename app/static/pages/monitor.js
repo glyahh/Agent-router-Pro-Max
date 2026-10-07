@@ -343,7 +343,13 @@
     return wrap;
   }
 
-  var GROUPS = [['gpt', 'GPT 中转站'], ['deepseek', 'DEEPSEEK'], ['glm', 'GLM']];
+  function routeGroups(rt) {
+    var raw = rt && rt.groups;
+    if (!Array.isArray(raw)) return [];
+    return raw.filter(function (g) { return g && g.id; }).map(function (g) {
+      return [g.id, g.name || g.id];
+    });
+  }
 
   // 采样器（用量历史的后台线程）的现状。health.monitor_state 每轮都带回 sampling，
   // 老前端没显示：采样线程不跑了，用量页只会"不再更新"，用户看不出是为什么。
@@ -369,7 +375,7 @@
     var reason = note || (blind ? '后端返回的路由数据不完整（缺 ' + missing.join('、') + '），无法判定当前路由。' : null);
     if (models === null) models = [];
 
-    var cols = h('div', { class: 'cols' }, GROUPS.map(function (g) {
+    var cols = h('div', { class: 'cols' }, routeGroups(rt).map(function (g) {
       var picked = sel ? sel[g[0]] : null;
       var unknown = (picked === null || picked === undefined) && blind;
       var state = picked === 'conflict' ? 'bad' : unknown ? 'warn' : picked ? 'ok' : '';

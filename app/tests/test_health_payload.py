@@ -106,8 +106,8 @@ plan = {'providers': [
     'junk',
 ]}
 out = health._routing(plan, None)
-check('config=None：selected 全空', out['selected'],
-      {'gpt': [], 'deepseek': [], 'glm': []})
+check('config=None：selected 只有来源里出现过的分组', out['selected'],
+      {'gpt': [], 'glm': []})
 check('candidates 按分组归堆（坏行不进）', out['candidates'],
       {'gpt': ['alpha'], 'glm': ['beta']})
 check('config=None 的 note', out['note'], '网关不可达，无法判定当前路由')

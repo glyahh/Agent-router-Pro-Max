@@ -20,6 +20,7 @@ import json
 import math
 import os
 import re
+import secrets
 import shutil
 import threading
 import time
@@ -91,8 +92,52 @@ def row_client_ids(row):
     return out
 
 
-def plan_head_conflicts(providers, enabled_ids=None):
+# 渠道头按代理端存。走网关的四个会把模型 ID 写进网关别名；
+# Copilot 编辑只影响它自己的显示名，不进网关。
+# Claude Code 桌面端和 CLI 写的是同一个 settings.json，所以共用 claude-code 这一份。
+GATEWAY_HEAD_AGENTS = ('codex', 'claude-code', 'opencode', 'hermes')
+HEAD_STORE_AGENTS = GATEWAY_HEAD_AGENTS + ('copilot',)
+HEAD_OWNER = {'claude-code-desktop': 'claude-code'}
+HEAD_AGENT_LABEL = {
+    'codex': 'Codex',
+    'claude-code': 'Claude Code',
+    'opencode': 'opencode',
+    'hermes': 'Hermes',
+    'copilot': 'Copilot 编辑',
+}
+
+
+def head_owner(agent_id):
+    """界面上的代理端 id → agent_heads 里的键。Copilot Agent 不存渠道头。"""
+    if agent_id == 'copilot-agent':
+        raise RouteError('Copilot Agent 不使用渠道头。')
+    owner = HEAD_OWNER.get(agent_id, agent_id)
+    if owner not in HEAD_STORE_AGENTS:
+        raise RouteError('未知的代理端：' + str(agent_id))
+    return owner
+
+
+def effective_head(plan, agent_id, row):
+    """这个代理端看这个来源时用的渠道头。
+
+    agent_heads 里有这个来源的键（含空字符串）就用它，空字符串是「主」。
+    没有键才回落到 providers[].head，这样没单独设过的代理端保持原样。
+    """
+    owner = HEAD_OWNER.get(agent_id, agent_id)
+    stored = (plan or {}).get('agent_heads') if isinstance(plan, dict) else None
+    slot = stored.get(owner) if isinstance(stored, dict) else None
+    sid = (row or {}).get('id')
+    if isinstance(slot, dict) and sid in slot:
+        return str(slot.get(sid) or '').strip()
+    return str((row or {}).get('head') or '').strip()
+
+
+def plan_head_conflicts(providers, enabled_ids=None, agent_heads=None, active_agents=None):
     """渠道头的不变量，返回人类可读的冲突列表（空列表 = 通过）。
+
+    active_agents 是已接入的代理端 id 集合。传入时，动态冲突（一个分组两个无头、
+    同一个客户端 ID 指向两家）只查这些代理端——没启动的不占干净模型 ID。
+    不传则仍查全部，存量测试不用改。头的格式和全局唯一是静态的，跟接不接入无关。
 
     分两类，**判据不同**，别混：
 
@@ -102,10 +147,9 @@ def plan_head_conflicts(providers, enabled_ids=None):
       S2 头全局唯一 —— 否则报错文案没法指认是谁。
 
     **动态**（只查 enabled_ids 里的来源，因为它们才可能同时生效）：
-      D1 一个分组最多一个**已启用**的无头来源 —— 两个都无头又暴露同名模型时无法消歧，
-         而 regen_catalog 的 picked 是 slug 唯一键字典，会静默二选一。
-      D2 已启用来源产出的客户端 ID 不许重复 —— 权威判据，也兜住遗留 A/ 别名
-         （老任务钉死的 ID，和我们的头在同一命名空间里）。
+      D1 每个代理端、每个分组最多一个**已启用**的无头来源。
+      D2 走网关的代理端合在一起，同一个客户端模型 ID 只能指向一家来源。
+         没传 agent_heads 时，仍按行上的 head 做原来的全局判断，存量测试不用改。
 
     为什么动态那两条必须按"已启用"判、不能按全部行判：
       现在的 routing-plan.json 有 9 行、0 个 head，gpt 组 5 行全无头 —— 按全部行判会得
@@ -114,58 +158,117 @@ def plan_head_conflicts(providers, enabled_ids=None):
     """
     problems = []
     heads = {}
-    for p in providers or []:
-        if not isinstance(p, dict):
-            continue
-        h = (p.get('head') or '').strip()
+
+    def _note_head(source_id, raw):
+        h = str(raw or '').strip()
         if not h:
-            continue
+            return
         if not HEAD_RE.match(h):
             problems.append('来源 %s 的渠道头「%s」不合法：只能用 %d 个字符以内的字母或数字开头，'
                             '后接小写字母、数字、点、下划线、连字符。'
-                            % (p.get('id'), h, HEAD_MAX))
-            continue
-        if h in heads:
+                            % (source_id, h, HEAD_MAX))
+            return
+        if h in heads and heads[h] != source_id:
             problems.append('渠道头「%s」被两个来源同时使用（%s 与 %s）；渠道头必须唯一。'
-                            % (h, heads[h], p.get('id')))
+                            % (h, heads[h], source_id))
         else:
-            heads[h] = p.get('id')
+            heads.setdefault(h, source_id)
+
+    rows = [p for p in (providers or []) if isinstance(p, dict)]
+    plan_view = {'agent_heads': agent_heads} if isinstance(agent_heads, dict) else None
+    if plan_view is None:
+        for p in rows:
+            _note_head(p.get('id'), p.get('head'))
+    else:
+        for agent in HEAD_STORE_AGENTS:
+            for p in rows:
+                _note_head(p.get('id'), effective_head(plan_view, agent, p))
 
     if enabled_ids is None:
         return problems
 
-    live = [p for p in (providers or [])
-            if isinstance(p, dict) and p.get('id') in enabled_ids]
-    by_group = {}
-    for p in live:
-        by_group.setdefault(p.get('group'), []).append(p)
-    for group, rows in by_group.items():
-        bare = [r.get('id') for r in rows if not (r.get('head') or '').strip()]
-        if len(bare) > 1:
-            problems.append('分组 %s 里同时启用了 %d 个没有渠道头的来源（%s）。同一分组最多'
-                            '只能启用一个无头来源（它保留干净的模型 ID）；其余的请各自设置'
-                            '渠道头，或先停用。'
-                            % (group, len(bare), '、'.join(str(x) for x in bare)))
+    live = [p for p in rows if p.get('id') in enabled_ids]
+    if plan_view is None:
+        by_group = {}
+        for p in live:
+            by_group.setdefault(p.get('group'), []).append(p)
+        for group, group_rows in by_group.items():
+            bare = [r.get('id') for r in group_rows if not (r.get('head') or '').strip()]
+            if len(bare) > 1:
+                problems.append('分组 %s 里同时启用了 %d 个没有渠道头的来源（%s）。同一分组最多'
+                                '只能启用一个无头来源（它保留干净的模型 ID）；其余的请各自设置'
+                                '渠道头，或先停用。'
+                                % (group, len(bare), '、'.join(str(x) for x in bare)))
+        seen = {}
+        for p in live:
+            for cid in row_client_ids(p):
+                if cid in seen and seen[cid] != p.get('id'):
+                    problems.append('模型 ID「%s」会被 %s 与 %s 同时暴露给客户端，网关无法判断'
+                                    '走哪一家；请给其中一个来源换一个渠道头，或取消其中一个对该'
+                                    '模型的暴露。' % (cid, seen[cid], p.get('id')))
+                else:
+                    seen[cid] = p.get('id')
+            for m in (p.get('models') or []):
+                alias = m.get('alias') if isinstance(m, dict) else None
+                if isinstance(alias, str) and alias.startswith('A/'):
+                    if alias in seen and seen[alias] != p.get('id'):
+                        problems.append('模型 ID「%s」既是 %s 的遗留别名，又被 %s 的渠道头产出；'
+                                        '请给 %s 换一个渠道头。'
+                                        % (alias, seen[alias], p.get('id'), p.get('id')))
+                    else:
+                        seen[alias] = p.get('id')
+        return problems
+
+    # 没传名单 = 全部代理端。传了就只留已接入的。
+    if active_agents is None:
+        store_agents = HEAD_STORE_AGENTS
+        gateway_agents = GATEWAY_HEAD_AGENTS
+    else:
+        live_owners = set(active_agents)
+        store_agents = tuple(a for a in HEAD_STORE_AGENTS if a in live_owners)
+        gateway_agents = tuple(a for a in GATEWAY_HEAD_AGENTS if a in live_owners)
+
+    for agent in store_agents:
+        label = HEAD_AGENT_LABEL[agent]
+        by_group = {}
+        for p in live:
+            by_group.setdefault(p.get('group'), []).append(p)
+        for group, group_rows in by_group.items():
+            bare = [r.get('id') for r in group_rows
+                    if not effective_head(plan_view, agent, r)]
+            if len(bare) > 1:
+                problems.append('%s 的分组 %s 里同时启用了 %d 个没有渠道头的来源（%s）。'
+                                '同一分组最多只能启用一个无头来源（它保留干净的模型 ID）；'
+                                '其余的请各自设置渠道头，或先停用。'
+                                % (label, group, len(bare), '、'.join(str(x) for x in bare)))
 
     seen = {}
-    for p in live:
-        for cid in row_client_ids(p):
-            if cid in seen and seen[cid] != p.get('id'):
-                problems.append('模型 ID「%s」会被 %s 与 %s 同时暴露给客户端，网关无法判断'
-                                '走哪一家；请给其中一个来源换一个渠道头，或取消其中一个对该'
-                                '模型的暴露。' % (cid, seen[cid], p.get('id')))
-            else:
-                seen[cid] = p.get('id')
-        # 遗留 A/ 别名（老任务钉死的 ID）也在同一命名空间里，一起查
-        for m in (p.get('models') or []):
-            alias = m.get('alias') if isinstance(m, dict) else None
-            if isinstance(alias, str) and alias.startswith('A/'):
-                if alias in seen and seen[alias] != p.get('id'):
-                    problems.append('模型 ID「%s」既是 %s 的遗留别名，又被 %s 的渠道头产出；'
-                                    '请给 %s 换一个渠道头。'
-                                    % (alias, seen[alias], p.get('id'), p.get('id')))
-                else:
-                    seen[alias] = p.get('id')
+    for agent in gateway_agents:
+        label = HEAD_AGENT_LABEL[agent]
+        for p in live:
+            head = effective_head(plan_view, agent, p)
+            for alias in (p.get('expose') or []):
+                if not isinstance(alias, str) or not alias or alias.startswith('A/'):
+                    continue
+                cid = client_id(head, alias)
+                prev = seen.get(cid)
+                if prev and prev[0] != p.get('id'):
+                    problems.append('模型 ID「%s」会被 %s 的 %s 与 %s 的 %s 同时暴露给客户端，'
+                                    '网关无法判断走哪一家；请给其中一个来源换一个渠道头，'
+                                    '或取消其中一个对该模型的暴露。'
+                                    % (cid, prev[1], prev[0], label, p.get('id')))
+                elif cid not in seen:
+                    seen[cid] = (p.get('id'), label)
+            for m in (p.get('models') or []):
+                alias = m.get('alias') if isinstance(m, dict) else None
+                if isinstance(alias, str) and alias.startswith('A/'):
+                    prev = seen.get(alias)
+                    if prev and prev[0] != p.get('id'):
+                        problems.append('模型 ID「%s」既是 %s 的遗留别名，又被 %s 的 %s 产出；'
+                                        '请给 %s 换一个渠道头。'
+                                        % (alias, prev[0], label, p.get('id'), p.get('id')))
+                    elif alias not in seen:
+                        seen[alias] = (p.get('id'), label)
     return problems
 
 # ---------------------------------------------------------------- 跨进程互斥
@@ -297,7 +400,8 @@ def _write_plan(plan):
 # <label>-YYYYmmdd-HHMMSS-ffffff，只有这个形状的才认领——名字对不上一律不碰，
 # 删错一个就是删掉用户手里的回滚点。
 AUTO_BACKUP_LABELS = ('route-switch', 'route-switch-config', 'catalog-regen', 'client-connect',
-                      'source-add', 'source-edit', 'source-delete')
+                      'source-add', 'source-edit', 'source-delete',
+                      'group-add', 'group-edit', 'group-delete')
 _AUTO_BACKUP_NAME = re.compile(
     r'^(?:' + '|'.join(re.escape(x) for x in AUTO_BACKUP_LABELS) + r')-\d{8}-\d{6}-\d{6}$')
 
@@ -420,43 +524,54 @@ def _assert_unique(config, provider):
                          % (provider.get('base_url'), len(hits)))
 
 
-def _assert_heads_ok(providers, enabled_ids=None):
+def _live_head_agents():
+    """已接入的代理端。探测失败返回 None，调用方按全部代理端判，不放宽。"""
+    try:
+        from . import agents
+        return agents.connected_head_owners()
+    except Exception as exc:                       # noqa: BLE001
+        _log.warning('读代理端接入状态失败，渠道头仍按全部代理端判（%s: %s）',
+                     type(exc).__name__, exc)
+        return None
+
+
+def _assert_heads_ok(providers, enabled_ids=None, agent_heads=None):
     """渠道头的不变量，见 plan_head_conflicts()。
 
     在**写盘之前**调用：这时候 config.yaml 和 routing-plan.json 都还没动，直接抛错
     就是干净的拒绝，不需要回滚。放在写之后就得走 _rollback_section 那一套，代价大得多。
+    agent_heads 是按代理端分开的那份；不传则只看行上的 head。
+    有按代理端分开的头时，动态冲突只查已接入的代理端。
     """
-    problems = plan_head_conflicts(providers, enabled_ids)
+    active = _live_head_agents() if isinstance(agent_heads, dict) else None
+    problems = plan_head_conflicts(providers, enabled_ids, agent_heads, active)
     if problems:
         raise RouteError('；'.join(problems))
+
+
+def _heads_arg(plan):
+    """plan 里已有 agent_heads 才把它传进校验；没有就保持原来的全局判断。"""
+    stored = plan.get('agent_heads') if isinstance(plan, dict) else None
+    return stored if isinstance(stored, dict) else None
 
 
 def _enabled_ids(config, plan):
     """当前真正生效的来源 id 集合。
 
-    判据与 rs.snapshot() 的 selected 完全一致（同一个 rs.active / rs.auth_active），
-    否则会出现"界面说在用的这两个来源"和"这里认为在用的"不是同一批，不变量就判错了。
+    判定直接转调 route_selector.row_states —— 那是"行级是否生效"的唯一实现（它同时吃
+    plan 顶层的行级选择）。在这里重写一份必然漂移：共享凭据的多行（Goat 服务 DEEPSEEK
+    与 GLM）共用一个 config 条目、一个启用位，从条目反推会把未选中的那行也算成生效，
+    渠道头的不变量于是误判，用户的来源编辑被假冲突拦下。
 
     find_entry 在条目缺失或重复时抛错，auth_active 在 auth 文件缺失时抛错 —— 两种都
-    按"这个来源没生效"处理，不让一个坏行把整次编辑拦死（那种坏行另有地方报出来）。
+    按"这个来源没生效"处理，不让一个坏行把整次编辑拦死（那种坏行另有地方报出来），
+    但不许静默：坏行参与的冲突被漏判时至少有迹可循。
     """
-    out = set()
-    for p in (plan or {}).get('providers', []):
-        if not isinstance(p, dict) or not p.get('id'):
-            continue
-        try:
-            if p.get('section') == 'auth-file':
-                if rs.auth_active():
-                    out.add(p['id'])
-                continue
-            if rs.active(rs.find_entry(config, p), p.get('section')):
-                out.add(p['id'])
-        except Exception as exc:                       # noqa: BLE001
-            # 按"这个来源没生效"处理，但不许静默：坏行参与的冲突被漏判时至少有迹可循。
-            _log.warning('_enabled_ids 跳过来源 %s（%s: %s）',
-                         p.get('id'), type(exc).__name__, exc)
-            continue
-    return out
+    rows = (plan or {}).get('providers')
+    states, failures = rs.row_states(config, rows, rs.selection_of(plan or {}))
+    for pid, exc in failures.items():
+        _log.warning('_enabled_ids 跳过来源 %s（%s: %s）', pid, type(exc).__name__, exc)
+    return {pid for pid, on in states.items() if on}
 
 
 # ---------------------------------------------------------------- 标签与 ID
@@ -524,15 +639,21 @@ def _unique_id(label, plan, keep=None):
 # ---------------------------------------------------------------- 表单 → 文件
 
 
-def _clean_spec(spec, creating):
+def _clean_spec(spec, creating, groups=None):
     if not isinstance(spec, dict):
         raise RouteError('来源参数格式无效')
     label = str(spec.get('label') or '').strip()
     if not label:
         raise RouteError('显示名称不能为空')
     group = spec.get('group')
-    if group not in rs.GROUPS:
-        raise RouteError('分组必须是 gpt / deepseek / glm 之一')
+    # 不传名单时按当前计划校验。添加来源不能顺手建组。
+    if groups is None:
+        try:
+            groups = rs.group_ids(_read_plan())
+        except RouteError:
+            groups = []
+    if not isinstance(group, str) or group not in groups:
+        raise RouteError('分组不存在，先创建分组')
     base_url = str(spec.get('base_url') or '').strip().rstrip('/')
     if not re.match(r'^https?://[^\s/]+', base_url):
         raise RouteError('端点要写成完整的 http(s) 地址，例如 https://api.example.com/v1')
@@ -668,7 +789,7 @@ def resolve_client_settings(plan=None):
         settings = p.get('model_settings')
         if not isinstance(settings, dict):
             continue
-        head = p.get('head') or ''
+        head = effective_head(plan, 'codex', p)
         for alias in settings:
             owners.setdefault(client_id(head, alias),
                               {'id': p.get('id'), 'label': p.get('label'),
@@ -714,6 +835,100 @@ def list_sources():
     return [_view(p, owners) for p in plan['providers']]
 
 
+# ---------------------------------------------------------------- 分组
+
+_GROUP_NAME_MAX = 64
+
+
+def _groups_for_write(plan):
+    """要落盘的分组名单。旧文件没有 groups 键时，先补上读路径合成的那份。"""
+    return [dict(g) for g in rs.groups_of(plan)]
+
+
+def _clean_group_name(name, groups, skip_id=None):
+    if not isinstance(name, str):
+        raise RouteError('分组名称不能为空')
+    text = name.strip()
+    if not text:
+        raise RouteError('分组名称不能为空')
+    if len(text) > _GROUP_NAME_MAX:
+        raise RouteError('分组名称不能超过 %d 个字' % _GROUP_NAME_MAX)
+    for g in groups:
+        if g['id'] == skip_id:
+            continue
+        if g['name'] == text:
+            raise RouteError('已经有同名分组')
+    return text
+
+
+def _new_group_id(existing):
+    """内部 id。显示名可以是中文，不从名字转。"""
+    for _ in range(8):
+        body = ''.join(ch for ch in secrets.token_urlsafe(6).lower() if ch.isalnum())[:8]
+        gid = 'g-' + body
+        if len(body) >= 4 and gid not in existing:
+            return gid
+    raise RouteError('分组编号生成失败，请重试')
+
+
+def create_group(spec):
+    """新建空分组。只写 routing-plan.json 的 groups，不改来源。"""
+    if not isinstance(spec, dict):
+        raise RouteError('分组参数格式无效')
+    with _Transaction():
+        plan = _read_plan()
+        groups = _groups_for_write(plan)
+        name = _clean_group_name(spec.get('name'), groups)
+        gid = _new_group_id({g['id'] for g in groups})
+        groups.append({'id': gid, 'name': name})
+        plan['groups'] = groups
+        selected = plan.get('selected')
+        if isinstance(selected, dict):
+            selected.setdefault(gid, [])
+        _backup('group-add', names=('routing-plan.json',))
+        _write_plan(plan)
+        return {'id': gid, 'name': name}
+
+
+def rename_group(group_id, spec):
+    """只改显示名。来源的 group 和已暴露的模型 ID 不动。"""
+    if not isinstance(spec, dict):
+        raise RouteError('分组参数格式无效')
+    with _Transaction():
+        plan = _read_plan()
+        groups = _groups_for_write(plan)
+        row = next((g for g in groups if g['id'] == group_id), None)
+        if row is None:
+            raise RouteError('找不到分组')
+        name = _clean_group_name(spec.get('name'), groups, skip_id=group_id)
+        if row['name'] == name:
+            return {'id': group_id, 'name': name}
+        row['name'] = name
+        plan['groups'] = groups
+        _backup('group-edit', names=('routing-plan.json',))
+        _write_plan(plan)
+        return {'id': group_id, 'name': name}
+
+
+def delete_group(group_id):
+    """没有来源才能删。删光之后首页回到「暂无分组」。"""
+    with _Transaction():
+        plan = _read_plan()
+        groups = _groups_for_write(plan)
+        if not any(g['id'] == group_id for g in groups):
+            raise RouteError('找不到分组')
+        rows = plan.get('providers') or []
+        if any(isinstance(p, dict) and p.get('group') == group_id for p in rows):
+            raise RouteError('这个分组下还有来源，先处理来源再删除')
+        plan['groups'] = [g for g in groups if g['id'] != group_id]
+        selected = plan.get('selected')
+        if isinstance(selected, dict):
+            selected.pop(group_id, None)
+        _backup('group-delete', names=('routing-plan.json',))
+        _write_plan(plan)
+        return {'deleted': group_id}
+
+
 # ---------------------------------------------------------------- 增删改
 
 
@@ -749,7 +964,8 @@ def create_source(spec):
         row = _row_from(clean, pid, tag)
         # 新来源默认停用（entry 带 excluded-models:['*']，row 的 expose 是空的），
         # 所以它进不了 enabled 集合，不会因为"并存"被拦——只查头的格式与唯一性。
-        _assert_heads_ok(plan['providers'] + [row], _enabled_ids(config, plan))
+        _assert_heads_ok(plan['providers'] + [row], _enabled_ids(config, plan),
+                         _heads_arg(plan))
         backup_dir = _backup('source-add')
         # ① config 先写：反过来的话 find_entry 找不到条目，下一次"保存路由"报错
         _gw_put(CUSTOM_SECTION, entries + [entry])
@@ -795,7 +1011,7 @@ def update_source(source_id, spec):
         # 编辑不改变条目的启用状态（_entry_from 保留原状态），所以 enabled 集合照旧。
         _assert_heads_ok([new_row if p.get('id') == source_id else p
                           for p in plan['providers']],
-                         _enabled_ids(config, plan))
+                         _enabled_ids(config, plan), _heads_arg(plan))
         backup_dir = _backup('source-edit')
         # ① config 先写（顺序同新增，身份变了也必须先落 config）
         _gw_put(section, candidate)
@@ -813,19 +1029,18 @@ def update_source(source_id, spec):
         return _sync_reasoning(_view(new_row, resolve_model_settings(plan)))
 
 
-def set_head(source_id, head):
-    """只改 plan 里那一行的 head（渠道头）。**不碰 config.yaml。**
+def set_head(source_id, head, agent):
+    """只改这一个代理端看这个来源时用的渠道头。**不碰 config.yaml，也不改行上的 head。**
 
-    为什么不复用 update_source：它要求 row['custom']，而 openai-official / srapi /
-    proxyhub / kkapi / goat 这些内置来源全是 custom=false —— 而需求 5 恰恰就是要在
-    它们之间做区分。head 是**纯 plan 字段**（build_config 只在写 config 的时候用它
-    拼别名），改它不需要动网关配置，所以单开这一条窄路径是安全的，也不需要
-    _assert_unique / find_entry 那些跟 config 相关的校验。
+    空字符串是「主」。行上的 head 只给还没单独设过的代理端做回落，点保存不会涂到
+    其它代理端。Claude Code 桌面端写到 claude-code 这一份（两边同一个 settings.json）。
+    Copilot Agent 不写模型，不存渠道头。
 
-    生效时机：下一次「保存路由」。这一条只改 plan，config.yaml 与目录都还没变——
-    两者于是仍然是**一致**的旧状态，不会出现"config 里是新 ID、目录里是旧 ID"。
-    界面上表现为"有未保存的改动"。
+    生效时机：下一次「保存路由」。这一条只改 plan，config.yaml 与目录都还没变。
     """
+    if not agent:
+        raise RouteError('改渠道头要带上代理端。')
+    owner = head_owner(agent)
     clean = str(head or '').strip()
     if clean and not HEAD_RE.match(clean):
         raise RouteError('渠道头「%s」不合法：只能用 %d 个字符以内的小写字母、数字、点、'
@@ -836,18 +1051,25 @@ def set_head(source_id, head):
         row = next((p for p in plan['providers'] if p.get('id') == source_id), None)
         if row is None:
             raise RouteError('找不到来源：' + str(source_id))
-        before = row.get('head') or ''
+        before = effective_head(plan, owner, row)
         if before == clean:
-            return {'id': source_id, 'head': clean, 'changed': False}
-        candidate = [dict(p, head=clean) if p.get('id') == source_id else p
-                     for p in plan['providers']]
+            return {'id': source_id, 'head': clean, 'changed': False,
+                    'before': before, 'agent': owner}
+        stored = plan.get('agent_heads')
+        if not isinstance(stored, dict):
+            stored = {}
+            plan['agent_heads'] = stored
+        slot = stored.get(owner)
+        if not isinstance(slot, dict):
+            slot = {}
+            stored[owner] = slot
+        slot[source_id] = clean
         # 判据按"当前真正生效的来源"算：改一个没启用的来源的头不应该被拦。
         config = _gw_get('config')
-        _assert_heads_ok(candidate, _enabled_ids(config, plan))
-        # 只动 head，其余字段用原对象，避免把 live 字段（available/fetch_error）带进 plan
-        row['head'] = clean
+        _assert_heads_ok(plan['providers'], _enabled_ids(config, plan), stored)
         _write_plan(plan)
-        return {'id': source_id, 'head': clean, 'changed': True, 'before': before}
+        return {'id': source_id, 'head': clean, 'changed': True,
+                'before': before, 'agent': owner}
 
 
 def _disabled_copy(entry, target, section):
@@ -1010,22 +1232,96 @@ def _restore_after_delete(plan, row, section, entries, providers_before, trigger
     return lines
 
 
+def _drop_from_selection(plan, source_id):
+    """从 plan 顶层的行级选择（`selected`）里摘掉一个来源 id。
+
+    必须跟着删：bridge 的启动体检按"selected 引用的 id 必须存在"判半写，残留一个已删
+    id 会被当成"四份文件停在了不同的时刻"，把用户指去恢复整份配置。
+    """
+    sel = plan.get('selected')
+    if not isinstance(sel, dict):
+        return
+    for group, names in sel.items():
+        if isinstance(names, list):
+            sel[group] = [n for n in names if n != source_id]
+
+
+def _drop_agent_head(plan, source_id):
+    """来源删掉之后，各代理端上记着的渠道头一起摘掉，避免留下指向空来源的键。"""
+    stored = plan.get('agent_heads')
+    if not isinstance(stored, dict):
+        return
+    for slot in stored.values():
+        if isinstance(slot, dict):
+            slot.pop(source_id, None)
+
+
+def _credential_shared(plan, row):
+    """这条凭据是否还被别的行共用（Goat 服务 DEEPSEEK 与 GLM 就是两行一条目）。
+
+    判定用 rs.plan_identity —— 与 build_config 的凭据分桶同一口径。auth-file 不参与：
+    每行对应自己的登录文件，没有"共用条目"一说。
+    """
+    if row.get('section') == 'auth-file':
+        return False
+    key = rs.plan_identity(row)
+    for p in plan.get('providers') or []:
+        if not isinstance(p, dict) or p.get('id') == row.get('id'):
+            continue
+        if p.get('section') == 'auth-file':
+            continue
+        try:
+            if rs.plan_identity(p) == key:
+                return True
+        except Exception:                              # noqa: BLE001 - 缺 section/base_url 的行
+            continue
+    return False
+
+
+def _remove_entry(section, entries, entry):
+    """把一条 config 条目从网关上拿掉。
+
+    codex-api-key 有专门的 DELETE 接口（参数 api-key + base-url，生产在用）；
+    openai-compatibility 的条目是 api-key-entries 数组，那个接口的参数形状没验证过，
+    所以走**整段 PUT 剔除** —— 与 build_config 写这一段是同一条路径。
+    """
+    if section == CUSTOM_SECTION:
+        try:
+            _gw_delete(section, {'api-key': _api_key_of(entry),
+                                 'base-url': str(entry.get('base-url') or '').rstrip('/')})
+        except Exception:
+            # DELETE 可能已经生效只是响应丢了，先复查再决定要不要往外抛（触发回滚）
+            if _still_present(section, entry):
+                raise
+        return
+    key = _identity(entry, section)
+    kept = [e for e in entries if _identity(e, section) != key]
+    if len(kept) == len(entries):
+        raise RouteError('网关那一段里没找到要删的条目（身份对不上），未改动配置')
+    _gw_put(section, kept)
+
+
 def delete_source(source_id):
     """三步删除，顺序不能变（B5）：
-    ① PUT 该条目 excluded-models:['*'] → ② 删 plan 行 → ③ DELETE config 条目。
+    ① PUT 该条目 excluded-models:['*'] → ② 删 plan 行 → ③ 删 config 条目。
     跳过 ① 的话，条目仍是 active，build_config 判定"检测到额外已启用供应商"，
-    用户下一次"保存路由"必然 409。"""
+    用户下一次"保存路由"必然 409。
+
+    两种例外：
+      · auth-file 行（官方登录）拒删 —— 删了没有 UI 入口重建，那是登录凭据不是普通来源；
+      · 凭据被别的行共用（Goat 同时服务 DEEPSEEK 与 GLM）时**只删 plan 行**：①③ 全跳过，
+        条目原样留着给其它行用。少了这道判断就会把共用条目删掉，另一分组那行变孤儿，
+        下一次保存报"供应商配置缺失或重复"。
+    """
     with _Transaction():
         config = _gw_get('config')
         plan = _read_plan()
         row = next((p for p in plan['providers'] if p.get('id') == source_id), None)
         if row is None:
             raise RouteError('找不到来源：' + str(source_id))
-        if not row.get('custom'):
-            raise RouteError('内置来源不可删除；要停用它请在配置页切换到别的来源')
         section = row.get('section')
-        if section != CUSTOM_SECTION:
-            raise RouteError('目前只支持删除 %s 段的自定义来源' % CUSTOM_SECTION)
+        if section == 'auth-file':
+            raise RouteError('官方登录来源不可删除；要停用它请取消勾选')
         entries = config.get(section)
         if not isinstance(entries, list):
             raise RouteError('网关配置里没有 %s 段，无法删除' % section)
@@ -1033,30 +1329,46 @@ def delete_source(source_id):
         if len(hits) > 1:
             raise RouteError('配置里有 %d 条同端点同标签的条目，先到管理面板理清重复项再删' % len(hits))
         entry = hits[0] if hits else None
+        shared = _credential_shared(plan, row)
         _backup('source-delete')
-        if entry is not None:
+        if entry is not None and not shared:
             _gw_put(section, [_disabled_copy(e, entry, section) for e in entries])   # ① 停用
         providers_before = list(plan['providers'])
+        selection_before = copy.deepcopy(plan.get('selected'))
         try:
             plan['providers'] = [p for p in plan['providers'] if p.get('id') != source_id]
+            _drop_from_selection(plan, source_id)
+            _drop_agent_head(plan, source_id)
             _write_plan(plan)                                                       # ② 删 plan 行
-            if entry is not None:                                                   # ③ 删 config 条目
-                try:
-                    _gw_delete(section, {'api-key': _api_key_of(entry),
-                                         'base-url': str(entry.get('base-url') or '').rstrip('/')})
-                except Exception:
-                    # DELETE 可能已经生效只是响应丢了，先复查再决定要不要回滚
-                    if _still_present(section, entry):
-                        raise
-            if entry is not None and _still_present(section, entry):
+            if entry is not None and not shared:
+                _remove_entry(section, entries, entry)                              # ③ 删 config 条目
+            if entry is not None and not shared and _still_present(section, entry):
                 raise RouteError('网关仍保留该配置条目，删除未完成')
         except Exception as exc:
+            # 行级选择也要还原：_restore_after_delete 拿内存里的 plan 与磁盘比对，
+            # 带着"已摘掉这个 id"的 selected 去比，写回时会把恢复的那行漏在选择之外。
+            if selection_before is None:
+                plan.pop('selected', None)
+            else:
+                plan['selected'] = selection_before
             lines = _restore_after_delete(plan, row, section, entries, providers_before, exc)
             _rethrow('删除来源', exc, lines)
+        # 被删来源的模型要立刻从客户端目录里消失：以前要等下一次"保存路由"才重刷，
+        # 期间 Codex 里还看得到它、选中即 404。重算失败不回滚删除（config 与 plan 已经
+        # 一致），只把结果挂进返回体 —— 与 _sync_reasoning 同一套做法。
+        try:
+            rs.regen_catalog(plan)
+            catalog = {'ok': True}
+        except Exception as exc:                       # noqa: BLE001
+            _log.exception('删除来源后重刷目录失败：%s', type(exc).__name__)
+            catalog = {'ok': False, 'error': _brief(exc)}
         # 删掉的行如果占着某个别名的档位归属，归属会落到下一个声明它的来源；
         # 一个都不剩的别名保持原样（不把人家配好的档位撤回去）
-        return _sync_reasoning({'deleted': source_id,
-                                'config_entry': 'removed' if entry is not None else 'absent'})
+        payload = _sync_reasoning(
+            {'deleted': source_id,
+             'config_entry': 'shared' if shared else ('removed' if entry is not None else 'absent')})
+        payload['catalog_regen'] = catalog
+        return payload
 
 
 # ---------------------------------------------------------------- 连通性测试

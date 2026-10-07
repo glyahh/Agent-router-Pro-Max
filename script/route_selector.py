@@ -76,7 +76,70 @@ def active(entry, section):
     if section=='auth-file':return auth_active()
     return not entry.get('disabled',False) if section=='openai-compatibility' else '*' not in entry.get('excluded-models',[])
 
-GROUPS=('gpt','deepseek','glm')
+# 旧三组的显示名。计划里没有 groups 键、且来源行用了这些 id 时用来补读，不写盘。
+LEGACY_GROUP_NAMES={'gpt':'GPT 中转站','deepseek':'DEEPSEEK','glm':'GLM'}
+LEGACY_GROUP_ORDER=('gpt','deepseek','glm')
+
+def groups_of(plan):
+    """分组名单。有 groups 键就用它（空列表是新人空白）。没有键时从来源行补，不写盘。"""
+    if not isinstance(plan,dict):
+        return []
+    if 'groups' in plan:
+        return _stored_groups(plan.get('groups'))
+    seen=[]
+    rows=plan.get('providers')
+    if isinstance(rows,list):
+        for p in rows:
+            if not isinstance(p,dict):
+                continue
+            gid=p.get('group')
+            if isinstance(gid,str) and gid and gid not in seen:
+                seen.append(gid)
+    ordered=[g for g in LEGACY_GROUP_ORDER if g in seen]
+    ordered+=[g for g in seen if g not in LEGACY_GROUP_ORDER]
+    return [{'id':gid,'name':LEGACY_GROUP_NAMES.get(gid,gid)} for gid in ordered]
+
+def _stored_groups(raw):
+    """groups 数组里认得出的项。坏项跳过，同 id 留第一次。"""
+    if not isinstance(raw,list):
+        return []
+    out=[];seen=set()
+    for item in raw:
+        if not isinstance(item,dict):
+            continue
+        gid=item.get('id')
+        if not isinstance(gid,str) or not gid or gid in seen:
+            continue
+        name=item.get('name')
+        if not isinstance(name,str) or not name.strip():
+            name=LEGACY_GROUP_NAMES.get(gid,gid)
+        else:
+            name=name.strip()
+        out.append({'id':gid,'name':name})
+        seen.add(gid)
+    return out
+
+def group_ids(plan):
+    return [g['id'] for g in groups_of(plan)]
+
+def selection_groups(plan, selected):
+    """这次保存要覆盖的分组。
+
+    有 groups 键：名单就是权威，选择项必须正好覆盖它。
+    没有键：来源里出现过的分组，再加上选择项里多带的旧三组空位。
+    旧前端总会把 gpt/deepseek/glm 一起发来，空组也要能保存。
+    """
+    ids=group_ids(plan)
+    if isinstance(plan,dict) and 'groups' in plan:
+        return ids
+    if not isinstance(selected,dict):
+        return ids
+    have=set(ids)
+    for gid in LEGACY_GROUP_ORDER:
+        if gid in selected and gid not in have:
+            ids.append(gid)
+            have.add(gid)
+    return ids
 OFFICIAL_MODELS_URL='https://chatgpt.com/backend-api/codex/models?client_version=1.0.0'
 # Image models are not in the Codex /models payload and cannot serve /v1/responses.
 OFFICIAL_IMAGE_MODELS=['gpt-image-1.5','gpt-image-2','gpt-image-2.5','gpt-image-2.5-flare','gpt-image-2.5-sunburst']
@@ -90,11 +153,55 @@ def leaf(upstream):return upstream.rsplit('/',1)[-1]
 #
 # 为什么这里又写一份而不是 import sources：sources.py 依赖 core.bridge，bridge 又
 # import 本文件，反向 import 会成环；而且本文件要能单独 python route_selector.py 跑起来
-# 当独立选择页用，不能依赖 app/ 包。所以只复制这三行纯函数，**不要"去重"**。
+# 当独立选择页用，不能依赖 app/ 包。渠道头的拼接和按代理端取头在这里再写一份，
+# **不要 import sources**。
 HEAD_SEP='/'
 def _client_id(head,alias):
     h=(head or '').strip()
     return h+HEAD_SEP+alias if h else alias
+
+# 走网关的代理端。渠道头按代理端存在 plan['agent_heads'] 里，这里不能 import
+# sources（会和 bridge 成环），所以这份名单和 effective 规则在 sources.py 再写一遍。
+_GATEWAY_HEAD_AGENTS=('codex','claude-code','opencode','hermes')
+
+def _effective_head(plan, agent_id, row):
+    """这个代理端的渠道头。agent_heads 里有键就用它（空字符串是「主」），否则回落行上的 head。"""
+    stored=(plan or {}).get('agent_heads') if isinstance(plan, dict) else None
+    slot=stored.get(agent_id) if isinstance(stored, dict) else None
+    sid=(row or {}).get('id')
+    if isinstance(slot, dict) and sid in slot:
+        return str(slot.get(sid) or '').strip()
+    return str((row or {}).get('head') or '').strip()
+
+def _live_head_agents():
+    """已接入的代理端。导入失败返回 None，调用方按全部代理端写，不放宽。"""
+    try:
+        from core.sources import _live_head_agents as live
+        return live()
+    except Exception:
+        return None
+
+def _gateway_heads(plan, row, live_agents=None):
+    """这个来源要写进网关的渠道头，去重且保持代理端顺序。
+
+    没有 agent_heads 时只有行上那一个头，别名和以前相同。
+    不同代理端给同一来源设了不同头时，同一个上游模型名写出多条 alias。
+    live_agents 给定时只写已接入的代理端，没启动的不占干净模型 ID。
+    一个走网关的都没接入时，退回行上那一个头。
+    """
+    if not isinstance((plan or {}).get('agent_heads'), dict):
+        return [(row.get('head') or '').strip()]
+    if live_agents is None:
+        agents=_GATEWAY_HEAD_AGENTS
+    else:
+        agents=tuple(a for a in _GATEWAY_HEAD_AGENTS if a in live_agents)
+        if not agents:
+            return [(row.get('head') or '').strip()]
+    out=[]
+    for agent in agents:
+        h=_effective_head(plan, agent, row)
+        if h not in out:out.append(h)
+    return out or ['']
 
 def belongs(leafname, upstream, group):
     low=leafname.lower()
@@ -238,7 +345,10 @@ def fetch_all(plan, config):
     return out
 
 def clean_plan(plan):
-    """Plan file keeps only durable fields; live fetch results stay in memory."""
+    """Plan file keeps only durable fields; live fetch results stay in memory.
+
+    顶层的 `selected`（行级选择）是**durable** 的——它随保存落盘、由 snapshot 读回，
+    不要顺手把它当 live 字段清掉。"""
     out=copy.deepcopy(plan)
     for p in out['providers']:
         p.pop('available',None);p.pop('fetch_error',None)
@@ -257,6 +367,7 @@ def snapshot():
     # 原写法 `plan['providers']` / `p['group']` 是直取，畸形 plan 仍会整页 409。
     raw=plan.get('providers') if isinstance(plan,dict) else None
     rows=list(raw) if isinstance(raw,list) else []
+    known_groups=set(group_ids(plan))
     unreadable=[]
     if not isinstance(raw,list):
         unreadable.append({'id':None,'label':'routing-plan.json 的 providers 不是列表','group':None,
@@ -267,11 +378,14 @@ def snapshot():
         if not isinstance(p,dict):
             unreadable.append({'id':None,'label':'（不是对象的行）','group':None,
                                'error':'providers 里有一项不是对象'})
-        elif p.get('group') not in GROUPS:
+        elif p.get('group') not in known_groups:
             unreadable.append({'id':p.get('id'),'label':p.get('label') or p.get('id') or '（缺 group 的行）',
-                               'group':None,'error':'这一行的 group 不是 %s 之一，无法归组'
-                               % '/'.join(GROUPS)})
-    for group in GROUPS:
+                               'group':None,'error':'这一行的 group 不在分组名单里'})
+    # 行级判定只走 row_states 这一份实现（它同时吃 plan 顶层的行级选择）：共享凭据的
+    # 多行（Goat 服务 DEEPSEEK 与 GLM）只有一个 config 条目、一个启用位，从条目反推会
+    # 让未选中的那一行跟着变亮——用户取消勾选、保存，它又回来。
+    states,row_failures=row_states(config,rows,selection_of(plan))
+    for group in group_ids(plan):
         ids=[]
         for p in rows:
             if not isinstance(p,dict) or p.get('group')!=group:continue
@@ -280,13 +394,12 @@ def snapshot():
                 unreadable.append({'id':None,'label':p.get('label') or '（缺 id 的行）','group':group,
                                    'error':'这一行没有 id，无法判断它是否启用'})
                 continue
-            try:
-                is_on=active(find_entry(config,p),p['section'])
-            except Exception as e:          # noqa: BLE001 - 同 health._routing 的口径
+            if pid in row_failures:
+                e=row_failures[pid]
                 unreadable.append({'id':pid,'label':p.get('label') or pid,
                                    'group':group,'error':type(e).__name__+': '+str(e)})
                 continue
-            if is_on:ids.append(pid)
+            if states.get(pid):ids.append(pid)
         # 一个分组可以同时启用多家来源。这里给**列表**：旧版那个 'conflict' 哨兵值随之下线——
         # "多家同时启用"从错误状态变成正常状态，前端不再需要"先解决冲突再保存"那条路。
         selected[group]=ids
@@ -303,9 +416,12 @@ def snapshot():
         if isinstance(p,dict) and p.get('id') in live:
             merged.update(live[p['id']])
         providers.append(merged)
+    stored=plan.get('agent_heads') if isinstance(plan,dict) else None
     return {'revision':revision(config),'selected':selected,'providers':providers,
+            'groups':groups_of(plan),
             'models':api('/v1/models').get('data',[]), 'client_connected':client_connected(),
-            'unreadable':unreadable}
+            'unreadable':unreadable,
+            'agent_heads':stored if isinstance(stored,dict) else {}}
 
 def client_connected():
     p=Path.home()/'.codex'/'config.toml'
@@ -323,18 +439,87 @@ def _selected_ids(selected, group):
     if isinstance(v,(list,tuple)):return [x for x in v if isinstance(x,str)]
     raise RouteError('供应商选择无效：%s 的选择项格式不对'%group)
 
-def build_config(config, plan, selected):
-    if set(selected)!= set(GROUPS): raise RouteError('选择项不完整')
+def selection_of(plan):
+    """plan 顶层的行级选择（用户意图）。**没有 / 形状不对一律返回 None**：那是旧文件，
+    读路径回退到"按 config 反推"的老口径，绝不把畸形数据当成"什么都没选"。
+
+    引用不存在的 id 直接丢掉、不算错：来源被删掉之后盘上残留的旧 id 不该让整页读不出来；
+    真正该拦这种残留的是 bridge 的启动体检（它按"四份文件不一致"报，不是这里）。
+    """
+    raw=plan.get('selected') if isinstance(plan,dict) else None
+    if not isinstance(raw,dict):return None
+    rows=plan.get('providers')
+    ids={p.get('id') for p in rows if isinstance(p,dict) and isinstance(p.get('id'),str) and p.get('id')} if isinstance(rows,list) else set()
+    out={}
+    for group in group_ids(plan):
+        try:names=_selected_ids(raw,group)
+        except RouteError:return None
+        out[group]=[n for n in dict.fromkeys(names) if n in ids]
+    return out
+
+def row_states(config, rows, selection=None):
+    """逐行判定「这一行当前是否生效」的**唯一实现**。
+
+    snapshot / sources._enabled_ids / health 三处都走它 —— 这三处只要口径不一致，
+    界面、渠道头不变量与监控页就会各说一套话。
+
+    判定按**凭据桶**（同 plan_identity 的多行共用一个 config 条目；Command Code Goat
+    服务 DEEPSEEK 与 GLM 就是一个例子）：
+      · 条目未启用           → 桶内行全不生效；
+      · 条目启用、桶内有选中 → 只有被选中的行生效（未选中的那一行不该跟着亮）；
+      · 条目启用、桶内无选中 → 有人在 Prism 之外启用了它，按 config 反推、桶内全部生效
+        （与历史行为一致，不静默把外部改动算成停用）；
+      · selection 为 None（旧 plan）→ 完全按 config 反推，同历史行为。
+
+    返回 (states, failures)：states 是 {行 id: 是否生效}，failures 是 {行 id: 异常}
+    （配置里那条凭据缺失或重复、auth 文件读不出来……）。没有 id 的行两张表都不进，
+    由调用方按各自口径点名；同 id 重复出现以最后一次判定为准。
+    """
+    sel=None
+    if isinstance(selection,dict):
+        sel={}
+        # 键就是这次认的分组。旧的三组常量不再当名单。
+        for group in selection:
+            try:sel[group]=set(_selected_ids(selection,group))
+            except RouteError:sel[group]=set()
+    buckets,states,failures={},{},{}
+    for p in [x for x in (rows or []) if isinstance(x,dict)]:
+        pid=p.get('id')
+        if not isinstance(pid,str) or not pid:continue
+        try:key=('auth-file',pid) if p.get('section')=='auth-file' else plan_identity(p)
+        except Exception as exc:                      # noqa: BLE001 - 缺 section/base_url 的行
+            failures[pid]=exc
+            continue
+        buckets.setdefault(key,[]).append(p)
+    for entries in buckets.values():
+        try:
+            if entries[0].get('section')=='auth-file':on=auth_active()
+            else:on=active(find_entry(config,entries[0]),entries[0]['section'])
+        except Exception as exc:                      # noqa: BLE001 - 同 snapshot 的逐行容错口径
+            for p in entries:failures[p['id']]=exc
+            continue
+        if not on:
+            for p in entries:states[p['id']]=False
+            continue
+        if sel is None or not any(p['id'] in sel.get(p.get('group'),()) for p in entries):
+            for p in entries:states[p['id']]=True
+            continue
+        for p in entries:states[p['id']]=p['id'] in sel.get(p.get('group'),())
+    return states,failures
+
+def build_config(config, plan, selected, live_agents=None):
+    groups=selection_groups(plan, selected if isinstance(selected,dict) else {})
+    if set(selected)!= set(groups): raise RouteError('选择项不完整')
     # selected[group] 兼容两种形状：老的单个 id（字符串）与新的 id 列表。
     # 老形状必须继续吃——备份脚本、外部调用、以及旧前端都可能发它。
-    sel={group:_selected_ids(selected,group) for group in GROUPS}
+    sel={group:_selected_ids(selected,group) for group in groups}
     new=copy.deepcopy(config)
     known={plan_identity(p) for p in plan['providers']}
     for section in SECTIONS:
         for entry in config.get(section,[]):
             if entry_identity(section,entry) not in known and active(entry,section):
                 raise RouteError('检测到额外已启用供应商，请先在原管理页停用，避免混用')
-    for group in GROUPS:
+    for group in groups:
         options=[p['id'] for p in plan['providers'] if p['group']==group]
         bad=[x for x in sel[group] if x not in options]
         if bad:raise RouteError('供应商选择无效：'+'、'.join(bad))
@@ -347,14 +532,12 @@ def build_config(config, plan, selected):
     for entries in buckets.values():
         enabled=False;picked=[];blocked=None
         unknown=False
-        heads=set()
         for p in entries:
             if p['id'] not in sel.get(p['group'],[]):continue
             enabled=True
             if p.get('blocked'):blocked=p
             # Fetch failed -> candidate list unknown. Never rewrite this credential's models from partial data.
             if p.get('fetch_error'):unknown=True
-            heads.add((p.get('head') or '').strip())
             picked+=[m for m in p.get('available',[]) if m['alias'] in p.get('expose',[]) and codex_usable(m['alias'])]
             picked+=legacy_models(p)
         if blocked:raise RouteError(blocked['label']+'：'+blocked['blocked'])
@@ -374,24 +557,38 @@ def build_config(config, plan, selected):
             raise RouteError('%s 的上游返回了空的模型列表，而这一行本来有勾选；写下去会把该凭据的'
                              '模型清空（等于停用它）。为避免静默改坏配置，本次未保存，请刷新后重试。'
                              % (entries[0].get('label') or entries[0].get('id')))
-        # 一个凭据只能有一个渠道头：同一个 base-url+tag 被两行不同头的来源共用时，
-        # 写进 config 的 models 只能有一个前缀，猜哪个都是错的，所以直接拒绝。
-        if len(heads)>1:
-            raise RouteError('%s 这一个凭据被多个渠道头共用（%s）；请让共用一个端点和标签的'
-                             '来源使用同一个渠道头'%(entries[0].get('label'),
-                                                '、'.join(sorted(h or '（无头）' for h in heads))))
-        head=next(iter(heads)) if heads else ''
+        if enabled and not isinstance((plan or {}).get('agent_heads'), dict):
+            # 没有按代理端分开存头时，一个凭据仍只能有一个渠道头（和以前一样）。
+            # 有 agent_heads 之后，同一来源的不同头写成多条 alias，撞车另判。
+            row_heads=set()
+            for p in entries:
+                if p['id'] not in sel.get(p['group'],[]):continue
+                row_heads.add((p.get('head') or '').strip())
+            if len(row_heads)>1:
+                raise RouteError('%s 这一个凭据被多个渠道头共用（%s）；请让共用一个端点和标签的'
+                                 '来源使用同一个渠道头'%(entries[0].get('label'),
+                                                    '、'.join(sorted(h or '（无头）' for h in row_heads))))
         if enabled:
-            # Empty picks are allowed: an empty models list means this credential registers nothing.
-            seen=set();models=[]
-            for m in picked:
-                alias=m['alias']
-                if alias in seen:continue
-                seen.add(alias)
-                # 遗留 A/ 别名是老任务钉死的模型 ID，**永不加渠道头**——加了那些会话就打不开。
-                # 见 HANDOFF §6.5.1（旧线程按 model 名钉住）。
-                client=alias if alias.startswith('A/') else _client_id(head,alias)
-                models.append({'name':m['name'],'alias':client})
+            # 同一个上游模型名可以写出多条 alias：各代理端给这一来源设的头不一样时，
+            # gpt-5.6-sol 和 gly/gpt-5.6-sol 都指向它。客户端 ID 若指向两个不同的上游名，拒绝。
+            # 遗留 A/ 别名永不加渠道头（老任务钉死的 ID）。
+            seen={};models=[]
+            for p in entries:
+                if p['id'] not in sel.get(p['group'],[]):continue
+                row_models=[m for m in p.get('available',[]) if m['alias'] in p.get('expose',[]) and codex_usable(m['alias'])]
+                row_models+=legacy_models(p)
+                for m in row_models:
+                    alias=m['alias']
+                    clients=[alias] if str(alias).startswith('A/') else [_client_id(h,alias) for h in _gateway_heads(plan,p,live_agents)]
+                    for client in clients:
+                        prev=seen.get(client)
+                        if prev is not None:
+                            if prev!=m['name']:
+                                raise RouteError('模型 ID「%s」会同时指向 %s 与 %s，网关无法判断走哪一家'
+                                                 %(client,prev,m['name']))
+                            continue
+                        seen[client]=m['name']
+                        models.append({'name':m['name'],'alias':client})
             # Config entries take name/alias only; context_length is UI/catalog metadata.
             entry['models']=models
         # Disabled credentials keep their saved model list; excluded-models/disabled already block them.
@@ -423,6 +620,12 @@ def apply_selection(data):
         old=api('/v0/management/config')
         if data.get('revision') != revision(old): raise RouteError('配置已变化，请刷新后再保存')
         plan=read_json(ROOT/'routing-plan.json');old_plan=copy.deepcopy(plan)
+        # 行级选择随本次保存落盘。共享凭据的多行只有一个 config 条目、一个启用位，
+        # "哪几行是用户真要的"只能存在这里；snapshot 读它逐行判定，否则用户取消勾选
+        # 的那一行会被同凭据的另一行拉着一起亮。（bridge._plan_consistency 早就按
+        # `selected` 这个顶层形状校验，此前只是没人写它。）
+        _sel_groups=selection_groups(plan, data.get('selected') if isinstance(data.get('selected'),dict) else {})
+        plan['selected']={group:_selected_ids(data.get('selected'),group) for group in _sel_groups}
         live=fetch_all(plan,old)
         for p in plan['providers']:
             p['available']=live[p['id']]['available'];p['fetch_error']=live[p['id']]['fetch_error']
@@ -461,7 +664,9 @@ def apply_selection(data):
                                  '本次未保存。请刷新后重新勾选。'
                                  % (p.get('label') or pid, len(avail), len(submitted)))
             p['expose']=kept
-        new=build_config(old,plan,data.get('selected',{}))
+        # 有按代理端分开的头时，只把已接入的写进网关。没传成 None 就保持全部都写。
+        live_agents=_live_head_agents() if isinstance(plan.get('agent_heads'), dict) else None
+        new=build_config(old,plan,data.get('selected',{}),live_agents)
         changed=[s for s in SECTIONS if old.get(s,[])!=new.get(s,[])]
         auth_before={};auth_changes={}
         for p in plan['providers']:
@@ -489,7 +694,12 @@ def apply_selection(data):
             if auth_before[pid]!=desired:auth_changes[pid]=desired
         if not changed and not auth_changes:
             if plan!=old_plan:
-                write_json(ROOT/'routing-plan.json',clean_plan(plan));regen_catalog(plan)
+                clean=clean_plan(plan)
+                write_json(ROOT/'routing-plan.json',clean)
+                # 只有 selection 变（providers 与盘上一致）时不重刷目录：catalog 只吃行里的
+                # 字段，而 regen_catalog 会连官方接口取元数据——一次纯勾选变更不该付这个代价。
+                if clean['providers']!=clean_plan(old_plan)['providers']:
+                    regen_catalog(plan)
             return snapshot()
         b=backup('route-switch-config');attempted=[]
         try:
@@ -507,9 +717,10 @@ def apply_selection(data):
             # 期望的运行时模型 ID 必须用**客户端可见 ID**（带渠道头）。用干净别名去
             # wait_models 会永远等不到，报"配置已保存，但运行时模型目录尚未匹配"，
             # 而配置其实已经正确写进去了 —— 一个纯粹由这里口径不一致造成的假失败。
-            expected={_client_id(p.get('head'),m['alias'])
+            expected={_client_id(h,m['alias'])
                       for p in plan['providers'] if p['id'] in _selected_ids(data.get('selected'),p['group'])
-                      for m in p.get('available',[]) if m['alias'] in p.get('expose',[]) and codex_usable(m['alias'])}
+                      for m in p.get('available',[]) if m['alias'] in p.get('expose',[]) and codex_usable(m['alias'])
+                      for h in _gateway_heads(plan,p,live_agents)}
             # 遗留 A/ 别名不加头，单独并进来（build_config 里也是这么写的）
             expected|={m['alias'] for p in plan['providers']
                        if p['id'] in _selected_ids(data.get('selected'),p['group'])
@@ -569,7 +780,12 @@ def patch_client_text(text, local_key):
         pattern=r'(?m)^'+re.escape(key)+r'\s*=.*$'
         return re.sub(pattern,lambda _:line,body) if re.search(pattern,body) else body.rstrip()+'\n'+line+'\n'
     # A relay is not the OpenAI backend: that name enables its proprietary compaction protocol.
-    for key,value in {'name':'Local Gateway','base_url':'http://127.0.0.1:8317/v1','wire_api':'responses','experimental_bearer_token':local_key,'requires_openai_auth':True,'supports_websockets':False,'request_max_retries':0,'stream_max_retries':0}.items():
+    # 容错交给客户端：中转站偶发一两次 502 是常态，原生 Codex 自己会带退避重试；
+    # Prism 早先把这两个值钉成 0，等于把它的容错关掉 —— 上游抖一下整个会话就断。
+    # requires_openai_auth 必须保持 true。false 会让客户端改走 API key 登录，
+    # 左下角的官方账号头像就没了。带头模型在「钉死官方 provider」的旧会话里仍会被
+    # 账号白名单拒绝；新会话读 model_catalog_json，不靠把这个开关关掉来放行。
+    for key,value in {'name':'Local Gateway','base_url':'http://127.0.0.1:8317/v1','wire_api':'responses','experimental_bearer_token':local_key,'requires_openai_auth':True,'supports_websockets':False,'request_max_retries':5,'stream_max_retries':5}.items():
         body=set_value(body,key,value)
     text=text[:target.end()]+body+text[end:]
     first=re.search(r'(?m)^\[',text);top=text[:first.start()];rest=text[first.start():]
@@ -625,7 +841,7 @@ def regen_catalog(plan):
         # Codex reads this catalog only at startup. Keep every explicitly exposed
         # model here, even if its provider is not the current selection, so a
         # later provider switch never requires a Codex restart just to see it.
-        head=(p.get('head') or '').strip();label=p.get('label') or p.get('id')
+        head=_effective_head(plan,'codex',p);label=p.get('label') or p.get('id')
         for alias in p.get('expose',[]):
             if not codex_usable(alias):continue
             live=next((m for m in p.get('available',[]) if m.get('alias')==alias),None)

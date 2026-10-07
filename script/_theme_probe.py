@@ -56,7 +56,7 @@ PROBE_JS = r"""
     wbtn: '.wbtn', view: '.view', statusbar: '.statusbar',
     card: '.card', btn: '.btn', btnPri: '.btn.pri', notice: '.notice', table: 'table.t',
     th: 'table.t th', td: 'table.t td', tag: '.tag', logview: '.logview',
-    statebox: '.statebox', row: '.modelrow', qrow: '.qrow', psrow: '.ps-row',
+    statebox: '.statebox', row: '.modelrow', psrow: '.ps-row',
     input: 'input:not([type=checkbox])', select: 'select'
   };
 
@@ -309,7 +309,7 @@ def find_browser():
 
 
 SHOW = ['top', 'view', 'card', 'btn', 'btnPri', 'table', 'th', 'notice', 'logview',
-        'statebox', 'tag', 'row', 'qrow', 'psrow']
+        'statebox', 'tag', 'row', 'psrow']
 
 
 def main() -> int:

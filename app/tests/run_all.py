@@ -14,13 +14,16 @@ CASES = [
     ('渠道头数据模型', 'test_heads.py'),
     ('路由核心（build_config / regen_catalog）', 'test_multi_source.py'),
     ('保存路由端到端', 'test_multi_source_save.py'),
-    ('Agent 适配器（5 个客户端）', 'test_agents.py'),
+    ('分组名单（首启 / 只读补全 / 改名 / 拒绝删除）', 'test_groups.py'),
+    ('删除来源（内置 / 共享凭据 / auth-file 例外）', 'test_source_delete.py'),
+    ('Agent 适配器（含 Copilot 与网关停止）', 'test_agents.py'),
     ('加固（重定向 / 预检闸门 / auth 补偿）', 'test_hardening.py'),
     ('HTTP 层（安全闸 / body 纪律 / 错误映射）', 'test_server_http.py'),
     ('health 聚合层（假 payload 注入）', 'test_health_payload.py'),
     ('启动路径（main.py 纯逻辑）', 'test_main_startup.py'),
     ('窗口控制与拖拽缩放 API', 'test_window_api.py'),
     ('真实端到端 (E2E) 浏览器加载性能', 'test_e2e_real_perf.py'),
+    ('UX 细节契约（静态断言 + 渲染探针）', 'test_ux_details.py'),
 ]
 
 

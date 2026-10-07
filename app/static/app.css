@@ -303,24 +303,15 @@ body.is-maximized .win-resizer{display:none}
        background:var(--panel2);font-size:13.5px;font-weight:600;color:var(--fg)}
 .cardb{padding:16px}
 .cardb.p0{padding:0}
-.qbox{border:1px solid var(--line);border-radius:var(--r-card);background:var(--panel);overflow:hidden;box-shadow:var(--shadow)}
-.qrow{display:grid;grid-template-columns:110px 1fr 70px;align-items:center;gap:16px;padding:16px 18px;
-      border-bottom:1px solid var(--line)}
-.qrow:last-child{border-bottom:0}
-.qrow .k{font-size:13px;font-weight:500;color:var(--fg2)}
 .bar{height:6px;background:var(--track);border-radius:var(--r-pill);overflow:hidden;border:0}
 .bar i{display:block;height:100%;background:var(--accent);border-radius:var(--r-pill);transition:width .2s ease-out}
 .bar.hot i{background:var(--bad)}
 .bar.warn i{background:var(--warn)}
 .bar.ok i{background:var(--ok)}
-.qrow .v{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:13.5px;text-align:right;color:var(--fg)}
-.qrow .v small{color:var(--fg3);font-size:11px}
-.qfoot{display:flex;gap:20px;padding:12px 18px;background:var(--panel2);border-top:1px solid var(--line);
-       font-size:12px;color:var(--fg3);flex-wrap:wrap}
 .chart{border:1px solid var(--line);border-radius:var(--r-card);background:var(--panel);padding:18px;box-shadow:var(--shadow)}
 .bars{display:flex;align-items:flex-end;gap:2.5px;height:110px;margin-bottom:14px}
 .bars i{flex:1;height:var(--h,0%);background:var(--accent);border-radius:2px 2px 0 0;min-height:2px;position:relative;contain:layout size style;transition:opacity .14s cubic-bezier(.16,1,.3,1),filter .14s ease}
-.bars i.s0{background:var(--track);height:2px!important}
+.bars i.s0{background:transparent;height:0!important;min-height:0;pointer-events:none}
 .bars i.f{background:var(--bad)}
 .bars i[data-split="1"]{background:linear-gradient(to top,var(--bad) 0%,var(--bad) calc(100% - var(--okpct,100%)),var(--accent) calc(100% - var(--okpct,100%)),var(--accent) 100%)}
 .bars i:hover{opacity:.88;filter:brightness(1.12)}
@@ -407,6 +398,7 @@ table.t .act .btn + .btn{margin-left:6px}
 .notice .pth{font-family:var(--mono);font-size:.94em;overflow-wrap:anywhere}
 
 /* ── 日志页 ───────────────────────────── */
+.logops{display:inline-flex;gap:6px;align-items:center}
 .logview{font-family:var(--mono);font-size:12px;line-height:1.65;background:var(--sunken);
          border:1px solid var(--line);border-radius:var(--r-card);padding:12px 14px;height:calc(100vh - 300px);
          min-height:260px;overflow:auto;white-space:pre;tab-size:4;box-shadow:var(--shadow);contain:paint layout}
@@ -477,7 +469,7 @@ table.t .act .btn + .btn{margin-left:6px}
 noscript .statebox{margin:40px auto;max-width:640px}
 
 /* ══ 用量页（static/pages/usage.js）═════════════════════════════════
-   本页独有的类。共用组件（.sec/.sechead/.qbox/.qrow/.bar/.chart/.tag/
+   本页独有的类。共用组件（.sec/.sechead/.bar/.chart/.tag/
    table.t/.btn/.statebox）用上面的通用规则，别在这儿再抄一份——scoped
    选择器权重更高，抄一份反而会盖掉通用样式。
 
@@ -489,24 +481,10 @@ noscript .statebox{margin:40px auto;max-width:640px}
 /* 顶部工具条 */
 .usage-page .u-toolbar{display:flex;align-items:center;gap:12px;padding:0 0 14px}
 .usage-page .u-spacer{flex:1}
-.usage-page .u-right{margin-left:auto}
 .usage-page .u-updated{font-size:12px;color:var(--fg3)}
 /* 本页的刷新/重试是 span，得显式 inline-block 才有内边距 */
 .usage-page .btn{display:inline-block}
 .usage-page .u-lead{margin-bottom:20px}
-
-/* 配额：没读数的窗口与页脚 */
-.usage-page .qrow .v.na{color:var(--fg3);font-size:12.5px}
-.usage-page .qfoot .rt{color:var(--fg2)}
-.usage-page .qfoot .rt.near{color:var(--warn)}
-.usage-page .qfoot .alarm{margin-left:auto;color:var(--bad)}
-
-/* 按模型分组的配额（同一账号不同模型读数能差很远，必须分开看） */
-.usage-page .u-mgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px;margin-top:16px}
-.usage-page .u-mhead{display:flex;align-items:center;gap:9px;padding:12px 16px;background:var(--panel2);
-  border-bottom:1px solid var(--line)}
-.usage-page .u-mhead .nm{font-family:var(--mono);font-size:12.5px;color:var(--fg);flex:1;min-width:0;
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 /* 进度条与柱状图：宽高来自 CSS 变量。
    默认给 0% 而不是 auto —— .bar i 是块级元素，不给宽度就是 100%，
@@ -517,22 +495,54 @@ noscript .statebox{margin:40px auto;max-width:640px}
    不把「13 成功 1 失败」整根画红 */
 .usage-page .bars i[data-split]{
   background:linear-gradient(to top,var(--accent) 0 var(--okpct,100%),var(--bad) var(--okpct,100%) 100%)}
-.usage-page .u-mini i{width:var(--w,0%)}
-
 /* 图例色块 */
 .usage-page .sw.ok{background:var(--accent)}
 .usage-page .sw.bad{background:var(--bad)}
-.usage-page .sw.idle{background:var(--track)}
 
-/* 表格：外层留白、失败数标红、合计行、滚动区、迷你条 */
+/* 来源明细、长期历史：一行一个周期或一个来源，数字靠右对齐 */
 .usage-page .u-bad{color:var(--bad)}
-.usage-page .chart.tight{padding:18px 6px 8px}
-.usage-page tr.u-sum td{background:var(--panel2);color:var(--fg);font-weight:500;border-top:1px solid var(--line2)}
-.usage-page .u-scroll{max-height:360px;overflow:auto}
-.usage-page .u-mini{display:inline-block;vertical-align:middle;width:88px;height:6px;background:var(--track);
-  border:0;border-radius:var(--r-pill);overflow:hidden}
-.usage-page .u-mini i{display:block;height:100%;background:var(--accent);border-radius:var(--r-pill)}
-.usage-page .u-mini.hot i{background:var(--bad)}
+.usage-page .u-lines{border:1px solid var(--line);border-radius:var(--r-card);background:var(--panel);box-shadow:var(--shadow);max-height:360px;overflow:auto}
+.usage-page .u-line{display:flex;align-items:baseline;gap:18px;padding:10px 16px;border-top:1px solid var(--line);font-size:13px}
+.usage-page .u-line:first-child{border-top:0}
+.usage-page .u-line .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg)}
+.usage-page .u-line .nums{display:flex;gap:18px;margin-left:auto;color:var(--fg3);font-variant-numeric:tabular-nums;white-space:nowrap}
+.usage-page .u-line .nums b{font-weight:500;color:var(--fg)}
+.usage-page .u-line .nums .u-bad,
+.usage-page .u-line .nums .u-bad b{color:var(--bad)}
+
+/* 总览指标卡：大数字在左，曲线与点阵底纹铺在右侧 62% */
+.usage-page .umetric{position:relative;display:flex;flex-direction:column;overflow:hidden;
+  min-height:236px;border:1px solid var(--line);border-radius:var(--r-card);background:var(--panel);
+  box-shadow:var(--shadow)}
+.usage-page .umetric-chart{position:absolute;top:0;right:0;bottom:0;width:62%;pointer-events:none;color:var(--ok)}
+.usage-page .umetric-chart::before{content:"";position:absolute;inset:0;
+  background:linear-gradient(to left,currentColor 0%,transparent 75%);opacity:.06}
+.usage-page .umetric-chart svg{position:absolute;inset:0;width:100%;height:100%;display:block}
+.usage-page .umetric-dots{position:absolute;inset:0;color:var(--fg);opacity:.12;
+  background-image:radial-gradient(currentColor 1px, transparent 1.2px);background-size:14px 14px;
+  -webkit-mask-image:linear-gradient(to right,transparent,#000 55%);
+  mask-image:linear-gradient(to right,transparent,#000 55%)}
+.usage-page .umetric-hit{position:absolute;inset:0}
+.usage-page .umetric-hit i{position:absolute;top:0;bottom:0;pointer-events:auto}
+.usage-page .umetric-body{position:relative;z-index:1;display:flex;flex-direction:column;flex:1;
+  padding:20px 28px 0}
+.usage-page .umetric-head{display:flex;align-items:center;gap:12px}
+.usage-page .umetric-title{margin:0;font-size:15px;font-weight:600;letter-spacing:-.01em;color:var(--fg)}
+.usage-page .umetric-value{margin-top:20px;font-size:56px;font-weight:500;line-height:1;
+  letter-spacing:-.025em;color:var(--fg);font-variant-numeric:tabular-nums}
+.usage-page .umetric-foot{position:relative;z-index:1;display:flex;align-items:center;gap:18px;
+  margin-top:auto;padding:13px 28px;border-top:1px solid var(--line);background:var(--panel);
+  font-size:12.5px;color:var(--fg3)}
+.usage-page .umetric-trend{display:inline-flex;align-items:center;gap:5px;font-weight:500;
+  font-variant-numeric:tabular-nums}
+.usage-page .umetric-trend svg{fill:none;stroke:currentColor;stroke-width:1.8;
+  stroke-linecap:round;stroke-linejoin:round}
+.usage-page .umetric[data-trend="up"] .umetric-trend{color:var(--ok)}
+.usage-page .umetric[data-trend="down"] .umetric-trend{color:var(--bad)}
+.usage-page .umetric-delta{font-variant-numeric:tabular-nums}
+.usage-page .umetric-stats{margin-left:auto;display:flex;align-items:center;gap:8px}
+.usage-page .umetric-stats b{font-weight:500;color:var(--fg2);font-variant-numeric:tabular-nums}
+.usage-page .umetric-stats .dot-sep{opacity:.45}
 
 /* 按天/按周、7d/30d/90d 切换 */
 .usage-page .u-seg{display:inline-flex;border:1px solid var(--line2);border-radius:var(--r-ctl);overflow:hidden;background:var(--panel2);padding:2px;gap:2px}
@@ -552,8 +562,7 @@ noscript .statebox{margin:40px auto;max-width:640px}
 .usage-page .statebox.u-slim .ic{font-size:14px}
 .usage-page .statebox.u-slim .t{font-size:13px}
 
-/* 窗口里每个桶都是空的：按 110px 画出来是一整块白，只有底部一条时间轴，
-   看着像加载失败。收成一条基线——柱子是 .s0 + min-height:2px，就是一条浅色底线。 */
+/* 窗口里每个桶都是空的：不画占位小柱，只留时间轴。 */
 .usage-page .chart.u-flat .bars{height:22px;margin-bottom:10px}
 
 /* 错误面板与「本次刷新失败」横幅 */
@@ -563,7 +572,6 @@ noscript .statebox{margin:40px auto;max-width:640px}
 .usage-page .u-error.slim{padding:12px 16px}
 .usage-page .u-error.slim .t{margin-bottom:4px}
 .usage-page .u-error.slim .d{margin-bottom:8px}
-.usage-page .u-note{font-size:12px;color:var(--fg3);margin-top:10px}
 
 /* ══ 首页节点树（static/pages/home.js）══════════════════════════════
    四级：Agent → 分组 → 来源 → 模型。共用组件仍然用上面的通用规则，
@@ -669,6 +677,7 @@ noscript .statebox{margin:40px auto;max-width:640px}
 .graph .gnote.warn{color:var(--warn)}
 .graph .gnote.ok{color:var(--ok)}
 .graph .gnote .pth{font-family:var(--mono)}
+.graph .gnote .btn{margin-left:6px}
 
 /* 首页底部：添加来源（保留）+ 动作条 */
 .addsrc{margin-top:6px}
@@ -708,6 +717,15 @@ noscript .statebox{margin:40px auto;max-width:640px}
 .home-sticky-bar .sb-note{font-size:12px;color:var(--fg2);white-space:nowrap}
 .home-sticky-bar .sb-spacer{flex:1}
 .home-sticky-bar .sb-right{display:flex;align-items:center;gap:8px}
+.home-sticky-bar .sb-msg{font-size:12px;color:var(--bad);line-height:1.45;max-width:52ch;
+  overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical}
+.home-sticky-bar .sb-msg.warn{color:var(--warn)}
+.home-sticky-bar .sb-msg.ok{color:var(--ok)}
+
+/* ── 应用到客户端：可选列表 ──────────────────── */
+.pv .r.pick{cursor:pointer;padding:6px 8px;border-radius:6px}
+.pv .r.pick:hover{background:var(--hover)}
+.pv .r.pick.on{background:var(--accentdim)}
 
 /* ── 连通性测试报错详情抽屉 ───────────────────── */
 .test-detail-box{display:flex;flex-direction:column;gap:12px;text-align:left}
@@ -768,16 +786,6 @@ noscript .statebox{margin:40px auto;max-width:640px}
   font-variant-numeric:tabular-nums;letter-spacing:-.02em}
 .metric-card .m-sub{font-size:11.5px;color:var(--fg3);margin-top:4px;display:flex;align-items:center;gap:6px}
 
-/* 呼吸微状态指示点 */
-.pulse-dot{width:6px;height:6px;border-radius:50%;background:var(--ok);position:relative;display:inline-block}
-.pulse-dot.off{background:var(--bad)}
-.pulse-dot.warn{background:var(--warn)}
-.pulse-dot::after{content:"";position:absolute;inset:-3px;border-radius:50%;border:1px solid var(--ok);
-  animation:radarRing 2s cubic-bezier(0.2,1,0.4,1) infinite}
-.pulse-dot.off::after{border-color:var(--bad)}
-.pulse-dot.warn::after{border-color:var(--warn)}
-@keyframes radarRing{0%{transform:scale(0.6);opacity:0.9}100%{transform:scale(2.2);opacity:0}}
-
 /* ── 路由与来源展示优化 ──────────────────────── */
 .route-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
 .route-chip{display:inline-flex;align-items:center;padding:2px 8px;font-size:12px;font-family:var(--mono);
@@ -800,19 +808,4 @@ noscript .statebox{margin:40px auto;max-width:640px}
 .sparkbar-box span{text-align:center;width:100%}
 .sparkbar-fill-ok{background:var(--ok);height:100%}
 .sparkbar-fill-bad{background:var(--bad);height:100%}
-
-/* ── Codex 极简双联配额仪表卡 ─────────────────── */
-.quota-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:18px}
-@media (max-width:640px){.quota-grid{grid-template-columns:1fr}}
-.quota-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);padding:14px 16px;box-shadow:var(--shadow)}
-.quota-card .qc-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
-.quota-card .qc-title{font-size:12.5px;font-weight:600;color:var(--fg)}
-.quota-card .qc-pct{font-family:var(--mono);font-size:13px;font-weight:600;color:var(--ok)}
-.quota-card .qc-pct.warn{color:var(--warn)}
-.quota-card .qc-pct.bad{color:var(--bad)}
-.quota-card .qc-bar{height:5px;background:var(--line2);border-radius:var(--r-pill);overflow:hidden;margin-bottom:8px}
-.quota-card .qc-fill{height:100%;background:var(--ok);border-radius:var(--r-pill);transition:width .3s ease}
-.quota-card .qc-fill.warn{background:var(--warn)}
-.quota-card .qc-fill.bad{background:var(--bad)}
-.quota-card .qc-foot{display:flex;justify-content:space-between;font-family:var(--mono);font-size:11px;color:var(--fg3)}
 

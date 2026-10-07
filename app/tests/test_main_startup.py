@@ -255,8 +255,10 @@ _froot = tempfile.mkdtemp(prefix='prism-first-run-')
 _orig_root2 = bridge.ROOT
 try:
     bridge.ROOT = Path(_froot)
-    check('全新目录：生成两个文件', sorted(bridge.ensure_first_run_files()),
-          ['.local-secrets.json', 'config.yaml'])
+    check('全新目录：生成三个文件', sorted(bridge.ensure_first_run_files()),
+          ['.local-secrets.json', 'config.yaml', 'routing-plan.json'])
+    plan = json.loads(Path(_froot, 'routing-plan.json').read_text(encoding='utf-8'))
+    check('空计划没有来源和分组', plan, {'providers': [], 'groups': [], 'selected': {}})
     saved = json.loads(Path(_froot, '.local-secrets.json').read_text(encoding='utf-8'))
     cfg = Path(_froot, 'config.yaml').read_text(encoding='utf-8')
     check_true('management_key 前缀 prism- 且两处一致',

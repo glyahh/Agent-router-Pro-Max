@@ -4,10 +4,9 @@
  * 数据来源：GET /api/usage?days=N  →  {ok:true, data:{quota, counts, history}}
  * 静态稿：用户已确认的静态样板 B 下半部（用量页）。样板文件 app/design/ui-mock.html 已不在仓库里。
  *
- * 三块内容，缺任何一块都不能白屏：
- *   ① 上区配额   quota.available === false 时显示"尚无配额观测"，绝不把空当 0%
- *   ② 请求计数   10 分钟一桶的柱状图 + 来源明细表
- *   ③ 长期历史   按天/周聚合（来自 sampling.py 落的 usage-history.db）
+ * 两块内容，缺任何一块都不能白屏：
+ *   ① 请求计数   10 分钟一桶的柱状图；有请求的来源各一行
+ *   ② 长期历史   按天或按周的合计（来自 sampling.py 落的 usage-history.db）
  *
  * 契约与安全：
  *   - 不引框架，原生 JS。
@@ -30,14 +29,6 @@
 
   /* ────────────────────────── 小工具 ────────────────────────── */
 
-  function renderIconHTML(name, extraClass) {
-    if (window.PrismUI && typeof window.PrismUI.iconHTML === 'function') {
-      return window.PrismUI.iconHTML(name, extraClass);
-    }
-    var raw = '<path d="M8 1.8l6.2 11.2c.3.5-.1 1-.7 1H2.5c-.6 0-1-.5-.7-1L8 1.8z" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linejoin="round"/><line x1="8" y1="6" x2="8" y2="9.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="11.8" r=".8" fill="currentColor"/>';
-    return '<svg class="ui-icon' + (extraClass ? ' ' + extraClass : '') + '" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">' + raw + '</svg>';
-  }
-
   function esc(v) {
     return String(v === null || v === undefined ? '' : v)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -52,41 +43,10 @@
     return isFinite(n) ? n : null;
   }
 
-  function pctText(v) {
-    if (v === null) return null;
-    var r = Math.round(v * 10) / 10;
-    return (Math.abs(r - Math.round(r)) < 0.05 ? String(Math.round(r)) : r.toFixed(1));
-  }
-
-  function clampPct(v) {
-    if (v === null) return 0;
-    return Math.max(0, Math.min(100, v));
-  }
-
   function pad2(n) { return (n < 10 ? '0' : '') + n; }
 
   function hhmm(d) { return pad2(d.getHours()) + ':' + pad2(d.getMinutes()); }
   function hhmmss(d) { return hhmm(d) + ':' + pad2(d.getSeconds()); }
-
-  // 倒计时：样板里是 "2h10m 后重置" / "3d4h 后重置"
-  function fmtAgo(sec) {
-    if (sec === null) return '—';
-    if (sec <= 0) return '即将重置';
-    if (sec < 60) return '<1m 后重置';
-    var m = Math.floor(sec / 60), h = Math.floor(m / 60), d = Math.floor(h / 24);
-    if (d > 0) return d + 'd' + (h % 24) + 'h 后重置';
-    if (h > 0) return h + 'h' + (m % 60) + 'm 后重置';
-    return m + 'm 后重置';
-  }
-
-  // 窗口长度 → "5h 窗口" / "7d 窗口" / "200m 窗口"
-  function windowLabel(minutes) {
-    var m = num(minutes);
-    if (m === null || m <= 0) return null;
-    if (m % 1440 === 0) return (m / 1440) + 'd 窗口';
-    if (m % 60 === 0) return (m / 60) + 'h 窗口';
-    return Math.round(m) + 'm 窗口';
-  }
 
   function parseHHMM(s) {
     var m = /^(\d{1,2}):(\d{2})/.exec(String(s || ''));
@@ -121,105 +81,11 @@
     return cred.length > 6 ? '…' + cred.slice(-6) : '…';
   }
 
-  // 样板把长邮箱截成 "user…@example.com"
-  function shortAccount(a) {
-    var s = String(a || '');
-    var at = s.indexOf('@');
-    if (at > 8) return s.slice(0, 8) + '…' + s.slice(at);
-    return s;
-  }
-
   /* ────────────────────────── 数据归一 ────────────────────────── */
   /* 后端（core/health.py + server.py）的输出以 INTERFACES.md 为准，
      但它是并行开发的，字段可能先到齐、后到齐或换个名字。
      这里做一遍归一：认得几种常见形状，认不出就返回空数组走空态，
      绝不因为一个没见过的字段把整页炸掉。 */
-
-  // 一条配额信号 → {label, used_percent, window_minutes, reset_at}
-  function normalizeSignal(label, sig) {
-    if (sig === null || typeof sig !== 'object') return null;
-    var used = num(sig.used_percent != null ? sig.used_percent : sig.usedPercent);
-    var win = num(sig.window_minutes != null ? sig.window_minutes : sig.windowMinutes);
-    var resetAt = num(sig.reset_at != null ? sig.reset_at : sig.resetAt);
-    if (resetAt === null) {
-      // 网关原始字段是 reset_after_seconds；后端应转成 reset_at，没转就在这儿补
-      var after = num(sig.reset_after_seconds != null ? sig.reset_after_seconds : sig.resetAfterSeconds);
-      if (after !== null) resetAt = Math.floor(Date.now() / 1000) + after;
-    }
-    if (used === null && win === null && resetAt === null) return null;
-    return {
-      label: String(label == null || label === '' ? '窗口' : label),
-      used_percent: used,
-      window_minutes: win,
-      reset_at: resetAt,
-      limit_reached: sig.limit_reached === true || sig.limitReached === true
-    };
-  }
-
-  // quota.windows / quota.model_quotas[x] 的多种形状 → 统一的窗口数组
-  function normalizeWindows(raw) {
-    var out = [];
-    if (!raw) return out;
-
-    if (Array.isArray(raw)) {
-      for (var i = 0; i < raw.length; i++) {
-        var it = raw[i];
-        if (!it || typeof it !== 'object') continue;
-        var one = normalizeSignal(it.label || it.name || it.window || it.key || ('窗口 ' + (i + 1)), it);
-        if (one) out.push(one);
-      }
-      return out;
-    }
-
-    if (typeof raw === 'object') {
-      // {signals:{'5h':{...}}} 或 {windows:{...}} 再套一层
-      var inner = raw.signals || raw.windows || raw.window;
-      if (inner && typeof inner === 'object' && !('used_percent' in raw) && !('usedPercent' in raw)) {
-        return normalizeWindows(inner);
-      }
-      // {used_percent:..} 直接就是一条读数
-      if ('used_percent' in raw || 'usedPercent' in raw || 'reset_at' in raw || 'reset_after_seconds' in raw) {
-        var solo = normalizeSignal(raw.label || raw.name || '窗口', raw);
-        return solo ? [solo] : [];
-      }
-      // {'5h':{...}, '7d':{...}} 字典
-      var keys = Object.keys(raw);
-      for (var j = 0; j < keys.length; j++) {
-        var s2 = normalizeSignal(keys[j], raw[keys[j]]);
-        if (s2) out.push(s2);
-      }
-    }
-    return out;
-  }
-
-  // quota.model_quotas → [{model, windows}]；支持 dict 与 list 两种形状
-  function normalizeModelQuotas(raw) {
-    var out = [];
-    if (!raw) return out;
-    var push = function (name, val) {
-      var wins = normalizeWindows(val);
-      if (wins.length) out.push({ model: String(name), windows: wins });
-    };
-    if (Array.isArray(raw)) {
-      for (var i = 0; i < raw.length; i++) {
-        var it = raw[i];
-        if (!it || typeof it !== 'object') continue;
-        var nm = it.model || it.name || it.label || it.id;
-        if (!nm) continue;
-        push(nm, it.windows || it.signals || it.quota || it);
-      }
-      return out;
-    }
-    if (typeof raw === 'object') {
-      var keys = Object.keys(raw).sort();
-      for (var j = 0; j < keys.length; j++) {
-        var v = raw[keys[j]];
-        if (v && typeof v === 'object' && v.available === false) continue; // 该模型没有反馈
-        push(keys[j], v);
-      }
-    }
-    return out;
-  }
 
   function normalizeCounts(raw) {
     var out = [];
@@ -243,9 +109,6 @@
       out.push({
         source_key: key,
         label: String(c.label || c.name || hostOf(key) || key || '未知来源'),
-        vendor: String(c.vendor || hostOf(key) || ''),
-        status: c.status || c.warning || null,
-        blocked: c.blocked || null,
         success: num(c.success) || 0,
         failed: num(c.failed != null ? c.failed : c.fail) || 0,
         buckets: buckets
@@ -264,7 +127,6 @@
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
       out.push({
         date: date,
-        label: String(r.label || r.source || hostOf(r.source_key) || '未知来源'),
         success: num(r.success) || 0,
         failed: num(r.failed != null ? r.failed : r.fail) || 0
       });
@@ -317,115 +179,164 @@
     });
   }
 
-  /* ────────────────────────── 渲染：配额 ────────────────────────── */
+  /* ────────────────────── 渲染：总览指标卡 ──────────────────────
+     大号总数 + 右侧曲线 + 点阵底纹。全部由已有 history 推导，不新增取数。
+     悬停热区沿用页面既有的 `<i data-time data-tot …>` 约定，bindTooltip 直接可用。 */
 
-  function quotaRowHTML(win) {
-    var p = pctText(win.used_percent);
-    var hot = win.used_percent !== null && win.used_percent >= 75;
-    // used_percent 缺失 ≠ 0%：写 "—" 并把条留空
-    var valHTML = p === null
-      ? '<span class="v na">—</span>'
-      : '<span class="v">' + p + '<small>%</small></span>';
-    var wPct = (p === null ? 0 : clampPct(win.used_percent));
-    return '<div class="qrow">'
-      + '<span class="k" title="' + esc(win.label) + '">' + esc(win.label) + '</span>'
-      + '<div class="bar' + (hot || win.limit_reached ? ' hot' : '') + '">'
-      + '<i data-w="' + wPct + '" style="--w:' + wPct + '%"></i></div>'
-      + valHTML
-      + '</div>';
+  function compactNum(n) {
+    if (n === null || n === undefined || !isFinite(n)) return '—';
+    var abs = Math.abs(n);
+    if (abs >= 1000000) return (n / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
+    if (abs >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+    return String(Math.round(n));
   }
 
-  function quotaFootHTML(windows) {
-    var parts = [];
-    var hottest = null;
-    for (var i = 0; i < windows.length; i++) {
-      var w = windows[i];
-      var tail = '';
-      var cls = 'rt';
-      if (w.reset_at !== null) {
-        var left = w.reset_at - Math.floor(Date.now() / 1000);
-        if (left <= 3600) cls = 'rt near';
-        tail = '<span class="' + cls + '" data-reset-at="' + w.reset_at + '">' + fmtAgo(left) + '</span>';
-      } else {
-        tail = '<span class="rt">重置时间未知</span>';
+  // history 是按「日期 × 来源」铺平的，总览要的是每天一行
+  function dailyTotals(data, days) {
+    var rows = normalizeHistory(data && data.history);
+    var byDate = {};
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      var cell = byDate[r.date] || (byDate[r.date] = { date: r.date, success: 0, failed: 0 });
+      cell.success += r.success;
+      cell.failed += r.failed;
+    }
+    var dates = Object.keys(byDate).sort();
+    if (days && dates.length > days) dates = dates.slice(-days);
+    var out = [];
+    for (var j = 0; j < dates.length; j++) {
+      var d = byDate[dates[j]];
+      d.total = d.success + d.failed;
+      out.push(d);
+    }
+    return out;
+  }
+
+  function totalsStats(points) {
+    var sum = 0, peak = 0, low = 0;
+    for (var i = 0; i < points.length; i++) {
+      var v = points[i].total;
+      sum += v;
+      if (i === 0 || v > peak) peak = v;
+      if (i === 0 || v < low) low = v;
+    }
+    return { sum: sum, peak: peak, low: low, avg: points.length ? sum / points.length : 0 };
+  }
+
+  function totalsTrend(points) {
+    if (!points.length) return { net: 0, step: 0, pct: 0 };
+    var first = points[0].total;
+    var last = points[points.length - 1].total;
+    var prev = points.length > 1 ? points[points.length - 2].total : first;
+    var net = last - first;
+    return { net: net, step: last - prev, pct: first ? (net / first) * 100 : 0 };
+  }
+
+  var TREND_ARROW = {
+    up: '<path d="M8 13V4M8 4 4.5 7.5M8 4l3.5 3.5"/>',
+    down: '<path d="M8 3v9M8 12 4.5 8.5M8 12l3.5-3.5"/>',
+    flat: '<path d="M3 8h10M13 8 10 5M13 8l-3 3"/>'
+  };
+
+  // viewBox 固定 300×120 + preserveAspectRatio=none：随卡片宽度自由拉伸，
+  // 线宽靠 vector-effect 保持 1.5px 不跟着变形。
+  function metricChartSVG(points, view) {
+    var W = 300, H = 120, PAD = 10;
+    var vals = [];
+    for (var i = 0; i < points.length; i++) vals.push(points[i].total);
+    var max = Math.max.apply(null, vals);
+    var min = Math.min.apply(null, vals);
+    var span = (max - min) || 1;
+    var n = vals.length;
+    var xOf = function (i) { return n > 1 ? PAD + i * ((W - PAD * 2) / (n - 1)) : W / 2; };
+    var yOf = function (v) { return H - PAD - ((v - min) / span) * (H - PAD * 2); };
+
+    var body = '';
+    if (view === 'bar') {
+      var barW = Math.max(2, ((W - PAD * 2) / n) * 0.55);
+      for (var b = 0; b < n; b++) {
+        var y = yOf(vals[b]);
+        body += '<rect x="' + (xOf(b) - barW / 2).toFixed(1) + '" y="' + y.toFixed(1)
+          + '" width="' + barW.toFixed(1) + '" height="' + Math.max(1, H - PAD - y).toFixed(1)
+          + '" rx="1.5" fill="currentColor" opacity="0.85"/>';
       }
-      var wl = windowLabel(w.window_minutes);
-      parts.push('<span>' + esc(wl || w.label) + ' · ' + tail + '</span>');
-      if (hottest === null || (w.used_percent || 0) > (hottest.used_percent || 0)) hottest = w;
-    }
-    if (hottest && hottest.used_percent !== null && hottest.used_percent >= 75) {
-      parts.push('<span class="alarm">' + renderIconHTML('warn') + ' ' + esc(hottest.label) + '已用 ' + pctText(hottest.used_percent) + '%</span>');
-    }
-    return '<div class="qfoot">' + parts.join('') + '</div>';
-  }
-
-  function quotaCardHTML(win) {
-    var p = pctText(win.used_percent);
-    var hot = win.used_percent !== null && win.used_percent >= 75;
-    var bad = win.used_percent !== null && win.used_percent >= 90;
-    var stateCls = bad ? 'bad' : hot ? 'warn' : '';
-    var valHTML = p === null ? '—' : (p + '%');
-    var wPct = (p === null ? 0 : clampPct(win.used_percent));
-    
-    var tail = '重置时间未知';
-    if (win.reset_at !== null) {
-      var left = win.reset_at - Math.floor(Date.now() / 1000);
-      tail = fmtAgo(left);
-    }
-    var title = esc(windowLabel(win.window_minutes) || win.label);
-
-    return '<div class="quota-card">'
-      + '<div class="qc-top">'
-      + '<span class="qc-title">' + title + '</span>'
-      + '<span class="qc-pct ' + stateCls + '">' + valHTML + '</span>'
-      + '</div>'
-      + '<div class="qc-bar">'
-      + '<div class="qc-fill ' + stateCls + '" style="width:' + wPct + '%"></div>'
-      + '</div>'
-      + '<div class="qc-foot">'
-      + '<span>' + esc(tail) + '</span>'
-      + (win.limit_reached ? '<span class="bad">已达上限</span>' : '')
-      + '</div>'
-      + '</div>';
-  }
-
-  function quotaEmptyHTML() {
-    return emptySlotHTML('尚无配额观测', '');
-  }
-
-  function renderQuota(data) {
-    var quota = data && data.quota && typeof data.quota === 'object' ? data.quota : null;
-    var windows = quota ? normalizeWindows(quota.windows || quota.signals) : [];
-    var models = quota ? normalizeModelQuotas(quota.model_quotas || quota.modelQuotas) : [];
-
-    var head = '<div class="sechead">'
-      + '<span class="stitle">配额</span><span class="hr"></span></div>';
-
-    if (windows.length === 0 && models.length === 0) {
-      return '<div class="sec">' + head
-        + quotaEmptyHTML() + '</div>';
-    }
-
-    var html = '<div class="sec">' + head;
-    if (windows.length) {
-      var cards = '';
-      for (var i = 0; i < windows.length; i++) cards += quotaCardHTML(windows[i]);
-      html += '<div class="quota-grid">' + cards + '</div>';
-    }
-    if (models.length) {
-      html += '<div class="u-mgrid">';
-      for (var m = 0; m < models.length; m++) {
-        var g = models[m];
-        var mcards = '';
-        for (var n = 0; n < g.windows.length; n++) mcards += quotaCardHTML(g.windows[n]);
-        html += '<div class="qbox"><div class="u-mhead">'
-          + '<span class="nm mono" title="' + esc(g.model) + '">' + esc(g.model) + '</span>'
-          + '<span class="tag">MODEL</span></div>'
-          + '<div class="quota-grid" style="margin-bottom:0">' + mcards + '</div></div>';
+    } else {
+      var line = 'M' + xOf(0).toFixed(1) + ',' + yOf(vals[0]).toFixed(1);
+      for (var k = 1; k < n; k++) {
+        // 中点法平滑：控制点取两点的水平中点，视觉上顺滑又不会过冲
+        var cx = ((xOf(k - 1) + xOf(k)) / 2).toFixed(1);
+        line += ' C' + cx + ',' + yOf(vals[k - 1]).toFixed(1)
+          + ' ' + cx + ',' + yOf(vals[k]).toFixed(1)
+          + ' ' + xOf(k).toFixed(1) + ',' + yOf(vals[k]).toFixed(1);
       }
-      html += '</div>';
+      var area = line
+        + ' L' + xOf(n - 1).toFixed(1) + ',' + (H - PAD)
+        + ' L' + xOf(0).toFixed(1) + ',' + (H - PAD) + ' Z';
+      body = '<path d="' + area + '" fill="currentColor" opacity="0.08"/>'
+        + '<path d="' + line + '" fill="none" stroke="currentColor" stroke-width="1.5"'
+        + ' vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/>';
     }
-    return html + '</div>';
+
+    return '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" aria-hidden>'
+      + body + '</svg>';
+  }
+
+  function metricHits(points) {
+    var n = points.length;
+    var w = n ? 100 / n : 100;
+    var out = '';
+    for (var i = 0; i < n; i++) {
+      var p = points[i];
+      var rate = p.total ? Math.round((p.success / p.total) * 100) : 100;
+      out += '<i style="left:' + (i * w).toFixed(2) + '%;width:' + w.toFixed(2) + '%"'
+        + ' data-time="' + esc(p.date) + '" data-tot="' + p.total + '"'
+        + ' data-okcnt="' + p.success + '" data-badcnt="' + p.failed + '"'
+        + ' data-rate="' + rate + '"></i>';
+    }
+    return out;
+  }
+
+  function renderOverview(data, opts) {
+    var points = dailyTotals(data, (opts && opts.days) || 7);
+    var view = (opts && opts.metricView) === 'bar' ? 'bar' : 'curve';
+
+    var seg = '<span class="u-seg umetric-view" data-role="metricview">'
+      + '<button type="button" data-v="curve" class="' + (view === 'curve' ? 'on' : '') + '">曲线</button>'
+      + '<button type="button" data-v="bar" class="' + (view === 'bar' ? 'on' : '') + '">柱状</button>'
+      + '</span>';
+    var head = '<div class="umetric-head"><h3 class="umetric-title">请求总览</h3>' + seg + '</div>';
+
+    if (!points.length) {
+      return '<div class="sec u-lead"><div class="umetric" data-trend="flat">'
+        + '<div class="umetric-body">' + head + emptySlotHTML('暂无数据', '') + '</div>'
+        + '</div></div>';
+    }
+
+    var st = totalsStats(points);
+    var tr = totalsTrend(points);
+    var trend = Math.abs(tr.pct) < 0.5 ? 'flat' : (tr.net >= 0 ? 'up' : 'down');
+    var delta = (tr.step >= 0 ? '+' : '−') + compactNum(Math.abs(tr.step));
+
+    return '<div class="sec u-lead"><div class="umetric" data-trend="' + trend + '">'
+      + '<div class="umetric-chart">'
+      + '<div class="umetric-dots"></div>'
+      + metricChartSVG(points, view)
+      + '<div class="umetric-hit">' + metricHits(points) + '</div>'
+      + '</div>'
+      + '<div class="umetric-body">' + head
+      + '<div class="umetric-value">' + compactNum(st.sum) + '</div>'
+      + '</div>'
+      + '<div class="umetric-foot">'
+      + '<span class="umetric-trend">'
+      + '<svg class="ui-icon" viewBox="0 0 16 16" aria-hidden>' + TREND_ARROW[trend] + '</svg>'
+      + Math.abs(tr.pct).toFixed(1) + '% 较首日</span>'
+      + '<span class="umetric-delta">' + delta + ' 较前一日</span>'
+      + '<span class="umetric-stats">'
+      + '峰值 <b>' + compactNum(st.peak) + '</b>'
+      + '<span class="dot-sep">·</span>谷值 <b>' + compactNum(st.low) + '</b>'
+      + '<span class="dot-sep">·</span>均值 <b>' + compactNum(Math.round(st.avg)) + '</b>'
+      + '</span>'
+      + '</div></div></div>';
   }
 
   /* ────────────────────────── 渲染：请求计数 ────────────────────────── */
@@ -498,28 +409,10 @@
     return out;
   }
 
-  function lastActiveBucket(b) {
-    for (var i = b.length - 1; i >= 0; i--) {
-      if (b[i].success || b[i].failed) return b[i];
-    }
-    return null;
-  }
-
-  function statusChip(count) {
-    // 后端若给了 status / warning / blocked，直接用（能表达 HTTP 403 这类上游错误）
-    var raw = count.blocked ? (count.status || 'BLOCKED') : count.status;
-    if (raw) {
-      var s = String(raw);
-      var low = s.toLowerCase();
-      var kind = (low.indexOf('403') >= 0 || low.indexOf('410') >= 0 || low.indexOf('401') >= 0
-        || low.indexOf('error') >= 0 || low.indexOf('block') >= 0 || low.indexOf('fail') >= 0)
-        ? 'bad' : (low.indexOf('idle') >= 0 || low.indexOf('off') >= 0 ? '' : 'ok');
-      return '<span class="tag ' + kind + '">' + esc(s) + '</span>';
-    }
-    if (count.failed > 0 && count.success === 0) return '<span class="tag bad">失败 ' + count.failed + '</span>';
-    if (count.failed > 0) return '<span class="tag warn">部分失败</span>';
-    if (count.success > 0) return '<span class="tag ok">ACTIVE</span>';
-    return '<span class="tag">IDLE</span>';
+  // 成功、失败写在行尾。失败为 0 也留着，两列才能对齐。
+  function countNums(ok, bad) {
+    return '<span class="nums"><span>成功 <b>' + ok + '</b></span>'
+      + '<span' + (bad ? ' class="u-bad"' : '') + '>失败 <b>' + bad + '</b></span></span>';
   }
 
   function renderCounts(data) {
@@ -577,8 +470,8 @@
     var axis = '';
     for (i = 0; i < ticks.length; i++) axis += '<span>' + esc(ticks[i]) + '</span>';
 
-    // 窗口里有桶、但桶里一个请求都没有。这时按 96px 画一块空图就是一片黑，
-    // 光留一条时间轴，看着像加载失败。收成一条基线（.u-flat）并说清为什么空。
+    // 窗口里有桶、但一个请求都没有。空桶 DOM 还在（flex 占位，时间轴不错位），
+    // 样式上不画柱。.u-flat 把图区收矮，只留时间轴。
     var flat = (totalOK === 0 && totalBad === 0);
 
     var yAxisHtml = '<div class="chart-y-axis">'
@@ -609,51 +502,32 @@
 
   function renderSourceTable(data) {
     var counts = normalizeCounts(data && data.counts);
-
-    var head = '<div class="sechead">'
-      + '<span class="stitle">来源明细</span><span class="hr"></span></div>';
-
-    var html = '<div class="sec">' + head;
-    if (!counts.length) {
-      html += emptySlotHTML('暂无数据', '') + '</div>';
-      return html;
+    // 没请求的来源不占行。上面的分布图已经覆盖了「这段时间没有量」。
+    var rows = [];
+    var i;
+    for (i = 0; i < counts.length; i++) {
+      if (counts[i].success || counts[i].failed) rows.push(counts[i]);
     }
+    if (!rows.length) return '';
 
-    // 全零的来源排到后面，有流量的按成功数降序——一屏先看到真正在干活的
-    var rows = counts.slice().sort(function (a, b) {
-      var ta = a.success + a.failed, tb = b.success + b.failed;
-      if (!ta && tb) return 1;
-      if (ta && !tb) return -1;
-      return tb - ta;
-    });
+    rows.sort(function (a, b) { return (b.success + b.failed) - (a.success + a.failed); });
 
-    // 后端给的 label 可能撞车（同一服务商挂两条来源，或后端还没做映射）。
-    // 撞了的行补一段掩码凭据尾巴，保证每行能对上号。
-    var labelCount = {}, i2;
-    for (i2 = 0; i2 < rows.length; i2++) labelCount[rows[i2].label] = (labelCount[rows[i2].label] || 0) + 1;
+    // 同名来源补一段掩码尾巴，悬停仍可对上凭据，界面上不铺服务商域名。
+    var labelCount = {};
+    for (i = 0; i < rows.length; i++) labelCount[rows[i].label] = (labelCount[rows[i].label] || 0) + 1;
 
     var body = '';
-    for (var i = 0; i < rows.length; i++) {
+    for (i = 0; i < rows.length; i++) {
       var c = rows[i];
-      var recent = lastActiveBucket(c.buckets);
-      var recentText = recent ? (recent.success + recent.failed) : 0;
       var shown = c.label + (labelCount[c.label] > 1 ? ' · ' + keyTail(c.source_key) : '');
-      body += '<tr>'
-        + '<td class="n" title="' + esc(maskSourceKey(c.source_key)) + '">' + esc(shown) + '</td>'
-        + '<td class="c" title="' + esc(maskSourceKey(c.source_key)) + '">' + esc(c.vendor || '—') + '</td>'
-        + '<td class="c">' + statusChip(c) + '</td>'
-        + '<td class="c n">' + c.success + '</td>'
-        + '<td class="c n' + (c.failed ? ' u-bad' : '') + '">' + c.failed + '</td>'
-        + '<td class="c"' + (recent ? ' title="' + esc(recent.time) + '"' : '') + '>'
-        + recentText + '</td>'
-        + '</tr>';
+      body += '<div class="u-line" title="' + esc(maskSourceKey(c.source_key)) + '">'
+        + '<span class="nm">' + esc(shown) + '</span>'
+        + countNums(c.success, c.failed) + '</div>';
     }
 
-    html += '<div class="chart tight"><div class="u-scroll"><table class="t" data-role="srctable">'
-      + '<thead><tr><th>来源</th><th class="c">服务商</th><th class="c">状态</th><th class="c">成功</th><th class="c">失败</th>'
-      + '<th class="c">最近 10 分钟</th></tr></thead>'
-      + '<tbody>' + body + '</tbody></table></div></div></div>';
-    return html;
+    return '<div class="sec"><div class="sechead">'
+      + '<span class="stitle">来源明细</span><span class="hr"></span></div>'
+      + '<div class="u-lines" data-role="srctable">' + body + '</div></div>';
   }
 
   /* ────────────────────────── 渲染：长期历史 ────────────────────────── */
@@ -692,60 +566,31 @@
       return html;
     }
 
-    // 按周期归组
+    // 一天或一周只留合计。按来源拆开、失败率、相对量条都不画。
     var groups = {}, order = [];
     for (var r = 0; r < rows.length; r++) {
       var row = rows[r];
       var period = byWeek ? mondayOf(row.date) : row.date;
       var g = groups[period];
-      if (!g) { g = groups[period] = { period: period, items: {}, order: [], ok: 0, bad: 0, max: 0 }; order.push(period); }
-      var it = g.items[row.label];
-      if (!it) { it = g.items[row.label] = { label: row.label, success: 0, failed: 0 }; g.order.push(row.label); }
-      it.success += row.success;
-      it.failed += row.failed;
+      if (!g) { g = groups[period] = { period: period, ok: 0, bad: 0 }; order.push(period); }
       g.ok += row.success;
       g.bad += row.failed;
     }
-    order.sort().reverse();  // 最近的在最上面
-
-    var peak = 0;
-    for (var q = 0; q < order.length; q++) { if (groups[order[q]].ok > peak) peak = groups[order[q]].ok; }
-    if (peak <= 0) peak = 1;
+    order.sort().reverse();
 
     var body = '';
     for (var k = 0; k < order.length; k++) {
       var g2 = groups[order[k]];
-      var names = g2.order.slice().sort();
-      for (var n = 0; n < names.length; n++) {
-        var it2 = g2.items[names[n]];
-        var tot = it2.success + it2.failed;
-        var failRate = tot ? Math.round(it2.failed / tot * 1000) / 10 : 0;
-        var cell = byWeek
-          ? (n === 0 ? g2.period + ' 起一周' : '')
-          : (n === 0 ? g2.period : '');
-        body += '<tr>'
-          + '<td class="n">' + esc(cell) + '</td>'
-          + '<td>' + esc(it2.label) + '</td>'
-          + '<td class="c n">' + it2.success + '</td>'
-          + '<td class="c n' + (it2.failed ? ' u-bad' : '') + '">' + it2.failed + '</td>'
-          + '<td class="c n">' + (tot ? failRate + '%' : '—') + '</td>'
-          + '<td class="c"><span class="u-mini' + (failRate >= 10 ? ' hot' : '') + '"><i data-w="'
-          + clampPct(Math.round(it2.success / peak * 100)) + '" style="--w:' + clampPct(Math.round(it2.success / peak * 100)) + '%"></i></span></td>'
-          + '</tr>';
-      }
-      if (names.length > 1) {
-        body += '<tr class="u-sum"><td>' + esc(byWeek ? g2.period + ' 起一周' : g2.period) + '</td>'
-          + '<td>合计</td>'
-          + '<td class="c">' + g2.ok + '</td>'
-          + '<td class="c' + (g2.bad ? ' u-bad' : '') + '">' + g2.bad + '</td>'
-          + '<td class="c">—</td><td class="c"></td></tr>';
-      }
+      if (!g2.ok && !g2.bad) continue;
+      body += '<div class="u-line"><span class="nm">' + esc(g2.period) + '</span>'
+        + countNums(g2.ok, g2.bad) + '</div>';
+    }
+    if (!body) {
+      html += emptySlotHTML('暂无记录', '') + '</div>';
+      return html;
     }
 
-    html += '<div class="chart tight"><div class="u-scroll"><table class="t" data-role="histtable">'
-      + '<thead><tr><th>' + (byWeek ? '周（周一起）' : '日期') + '</th><th>来源</th>'
-      + '<th class="c">成功</th><th class="c">失败</th><th class="c">失败率</th><th class="c">相对量</th></tr></thead>'
-      + '<tbody>' + body + '</tbody></table></div></div></div>';
+    html += '<div class="u-lines" data-role="histtable">' + body + '</div></div>';
     return html;
   }
 
@@ -759,9 +604,9 @@
     data: null,
     stampText: '',
     pendingError: null,
-    expiredSeen: false,
     days: 7,
     historyMode: 'day',
+    metricView: 'curve',
     timer: null,
     ticker: null,
     unmounted: true,
@@ -828,7 +673,7 @@
     }
     var d = state.data;
     state.bodyEl.innerHTML = (state.pendingError ? bannerHTML(state.pendingError) : '')
-      + renderQuota(d)
+      + renderOverview(d, state)
       + renderCounts(d)
       + renderSourceTable(d)
       + renderHistory(d, state);
@@ -886,27 +731,9 @@
     }
   }
 
-  // 渲染后跑一次：填空态、把尺寸写进 CSS 变量、把倒计时文本刷一遍
   function wire() {
     fillEmptySlots();
     applySizes();
-    tickCountdowns();
-  }
-
-  // 走秒只改文本节点，不重排整页
-  function tickCountdowns() {
-    if (!state.bodyEl) return;
-    var nodes = state.bodyEl.querySelectorAll('[data-reset-at]');
-    var now = Math.floor(Date.now() / 1000);
-    for (var i = 0; i < nodes.length; i++) {
-      var el = nodes[i];
-      var at = Number(el.getAttribute('data-reset-at'));
-      if (!isFinite(at)) continue;
-      var left = at - now;
-      el.textContent = fmtAgo(left);
-      if (left <= 3600) el.className = 'rt near';
-      if (left <= 0) state.expiredSeen = true;
-    }
   }
 
   function tick() {
@@ -914,13 +741,6 @@
     // 宿主换页时若只是把容器换掉、忘了调 unmount，这里自己收手，别让定时器空转
     if (document.documentElement.contains && !document.documentElement.contains(state.bodyEl)) {
       UsagePage.unmount();
-      return;
-    }
-    tickCountdowns();
-    // 倒计时归零说明窗口翻篇了，主动补一次数据（一次归零只补一次，避免死循环）
-    if (state.expiredSeen && !state.refreshing) {
-      state.expiredSeen = false;
-      refresh();
     }
   }
 
@@ -963,6 +783,9 @@
     var segRole = seg.getAttribute('data-role');
     if (segRole === 'histmode') {
       state.historyMode = v === 'week' ? 'week' : 'day';
+      scheduleRender();
+    } else if (segRole === 'metricview') {
+      state.metricView = v === 'bar' ? 'bar' : 'curve';
       scheduleRender();
     } else if (segRole === 'days') {
       var n = Number(v);
@@ -1020,10 +843,16 @@
         yAlign = '15%';
       }
 
-      tooltip.style.left = targetX + 'px';
-      tooltip.style.top = targetY + 'px';
-      tooltip.style.transform = 'translate(' + xAlign + ', ' + yAlign + ')';
+      // 用量页带着进场动画，computed transform 不是 none，fixed 的参照是
+      // .usage-page 而不是视口。left/top 必须换成相对这一层的坐标，否则一滚动卡片就飘走。
+      tooltip.style.opacity = '0';
       tooltip.style.display = 'block';
+      var origin = tooltip.offsetParent && tooltip.offsetParent.getBoundingClientRect();
+      var ox = origin ? origin.left : 0;
+      var oy = origin ? origin.top : 0;
+      tooltip.style.left = Math.round(targetX - ox) + 'px';
+      tooltip.style.top = Math.round(targetY - oy) + 'px';
+      tooltip.style.transform = 'translate(' + xAlign + ', ' + yAlign + ')';
       tooltip.style.opacity = '1';
     }
 

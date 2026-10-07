@@ -176,7 +176,8 @@ try:
 
     check_true('返回体是 snapshot', isinstance(result, dict) and 'selected' in result)
     check('selected.gpt 是两家', result['selected']['gpt'], ['oai', 'srapi'])
-    check('selected.deepseek 是空列表', result['selected']['deepseek'], [])
+    # 这份计划只有 gpt 来源。读路径不发明没有来源的旧组，deepseek 不会出现在 snapshot。
+    check('没有来源的旧组不出现在 snapshot', 'deepseek' in result['selected'], False)
 
     put_sections = [p for (m, p) in stub.calls if m == 'PUT']
     check('PUT 了 codex-api-key', put_sections, ['/v0/management/codex-api-key'])
@@ -251,7 +252,7 @@ try:
     check('老形状：srapi 启用且带头', [m['alias'] for m in ent2['t-b']['models']], ['srapi/' + A])
     check('老形状：官方被停用', ent2['t-a'].get('excluded-models'), ['*'])
     check('老形状：selected 仍是列表', res2['selected']['gpt'], ['srapi'])
-    check('老形状：未选的分组是空列表', res2['selected']['glm'], [])
+    check('老形状：没有来源的分组不出现', 'glm' in res2['selected'], False)
 
     print('== 上游 HTTP 200 但候选为空：必须拒绝，且不得清空用户勾选 ==')
     # 这是 ADR-0008 §4 点名"最需要守住"的那条的反面：旧写法在这里
@@ -364,6 +365,91 @@ try:
     except bridge.RouteError as e:
         _err = e
     check_true('图片别名不触发"清空"守卫（不误拦）', _err is None, repr(_err))
+
+    print('== 共享凭据的两行（Goat 服务 DEEPSEEK 与 GLM）：取消一行后保存，它留在取消态 ==')
+    # 现场复刻：同一个端点、同一把密钥出现在两行，config 里只有**一条**条目。用户在
+    # DEEPSEEK 组取消 goat 的勾选再保存——旧实现从条目反推，会把 goat 也报成启用，
+    # 界面把它又勾回来（还会报"存在重复无渠道头来源"）。行级选择落盘之后，未选中的
+    # 那一行必须留在未启用，且**刷新页面（重读 /api/state）后仍然如此**。
+    goat_plan = {'note': 'stub', 'providers': [
+        {'id': 'goat', 'label': 'Command Code Goat', 'group': 'deepseek',
+         'section': 'openai-compatibility', 'base_url': 'https://c.example/v1',
+         'head': '', 'models': [{'name': 'deepseek-v4-pro', 'alias': 'deepseek-v4-pro'}],
+         'expose': ['deepseek-v4-pro']},
+        {'id': 'goat-glm', 'label': 'Command Code Goat', 'group': 'glm',
+         'section': 'openai-compatibility', 'base_url': 'https://c.example/v1',
+         'head': '', 'models': [], 'expose': ['glm-5.3-flash']},
+    ]}
+    goat_cfg = {'openai-compatibility': [
+        {'name': 'Command Code (Goat)', 'base-url': 'https://c.example/v1',
+         'api-key-entries': [{'api-key': 'k-c'}], 'models': [], 'request-retry': 0},
+    ], 'codex-api-key': []}
+    (TMP / 'routing-plan.json').write_text(json.dumps(goat_plan, ensure_ascii=False, indent=2),
+                                           encoding='utf-8')
+    stub.config = copy.deepcopy(goat_cfg)
+    stub.rebuild()
+    goat_avail = {'goat': [{'name': 'deepseek-v4-pro', 'alias': 'deepseek-v4-pro',
+                            'context_length': None}],
+                  'goat-glm': [{'name': 'glm-5.3-flash', 'alias': 'glm-5.3-flash',
+                                'context_length': None}]}
+    rs.fetch_all = lambda p, c: {x['id']: {'available': copy.deepcopy(goat_avail.get(x['id'], [])),
+                                           'fetch_error': None,
+                                           'expose': list(x.get('expose') or [])}
+                                 for x in p['providers']}
+    res_goat = bridge._apply_selection_locked({
+        'revision': rs.revision(stub.config),
+        'selected': {'gpt': [], 'deepseek': [], 'glm': ['goat-glm']},
+        'picks': {},
+    })
+    check('返回体：未选中的 goat 不在 selected.deepseek',
+          res_goat['selected']['deepseek'], [])
+    check('返回体：goat-glm 仍在 selected.glm', res_goat['selected']['glm'], ['goat-glm'])
+    disk_goat = json.loads((TMP / 'routing-plan.json').read_text(encoding='utf-8'))
+    check('plan 落盘了行级选择', disk_goat.get('selected'),
+          {'gpt': [], 'deepseek': [], 'glm': ['goat-glm']})
+    entry_goat = stub.config['openai-compatibility'][0]
+    check('共享条目仍启用（GLM 还要用它）', 'disabled' in entry_goat, False)
+    check('条目只注册了 glm 的模型（deepseek 的没被并进来）',
+          [m['alias'] for m in entry_goat['models']], ['glm-5.3-flash'])
+    snap_goat = rs.snapshot()
+    check('刷新页面（重读 /api/state）：goat 仍是未选中',
+          snap_goat['selected']['deepseek'], [])
+    check('刷新页面：goat-glm 仍选中', snap_goat['selected']['glm'], ['goat-glm'])
+    check('刷新页面：没有读不出来的行', snap_goat['unreadable'], [])
+
+    print('== 只改选择、网关配置一个字节都不用改：selection 仍要落盘 ==')
+    # 用户现场最常见的一步：取消 deepseek 的 goat 勾选。因为 GLM 的 goat-glm 还选中着，
+    # 共享条目照旧启用、models 也不变 → changed 为空 → 走"无变化"早返回分支。
+    # 这条路径以前只写 plan 不等价的东西，现在必须把 selected 写下去（否则取消不了）。
+    settled_plan = {'note': 'stub', 'providers': [
+        {'id': 'goat', 'label': 'Command Code Goat', 'group': 'deepseek',
+         'section': 'openai-compatibility', 'base_url': 'https://c.example/v1',
+         'head': '', 'models': [], 'expose': []},
+        {'id': 'goat-glm', 'label': 'Command Code Goat', 'group': 'glm',
+         'section': 'openai-compatibility', 'base_url': 'https://c.example/v1',
+         'head': '', 'models': [], 'expose': ['glm-5.3-flash']},
+    ]}
+    settled_cfg = {'openai-compatibility': [
+        {'name': 'Command Code (Goat)', 'base-url': 'https://c.example/v1',
+         'api-key-entries': [{'api-key': 'k-c'}], 'request-retry': 0,
+         'models': [{'name': 'glm-5.3-flash', 'alias': 'glm-5.3-flash'}]},
+    ], 'codex-api-key': []}
+    (TMP / 'routing-plan.json').write_text(json.dumps(settled_plan, ensure_ascii=False, indent=2),
+                                           encoding='utf-8')
+    stub.config = copy.deepcopy(settled_cfg)
+    stub.rebuild()
+    calls_before5 = len(stub.calls)
+    res_settled = bridge._apply_selection_locked({
+        'revision': rs.revision(stub.config),
+        'selected': {'gpt': [], 'deepseek': [], 'glm': ['goat-glm']},
+        'picks': {},
+    })
+    check('网关配置没变时不发 PUT（只改勾选不动配置）',
+          [c for c in stub.calls[calls_before5:] if c[0] == 'PUT'], [])
+    check('返回体：goat 未选中', res_settled['selected']['deepseek'], [])
+    disk_settled = json.loads((TMP / 'routing-plan.json').read_text(encoding='utf-8'))
+    check('早返回分支也把 selection 落盘', disk_settled.get('selected'),
+          {'gpt': [], 'deepseek': [], 'glm': ['goat-glm']})
 
 finally:
     rs.api, rs.fetch_all = real_api, real_fetch_all

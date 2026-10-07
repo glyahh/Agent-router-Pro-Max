@@ -1,4 +1,5 @@
-let key='',state=null,picks={};const GROUPS=['gpt','deepseek','glm'];const $=id=>document.getElementById(id);
+let key='',state=null,picks={};const $=id=>document.getElementById(id);
+function groupList(s){return (s&&Array.isArray(s.groups))?s.groups:[];}
 async function api(path,data){const response=await fetch(path,{method:data?'POST':'GET',headers:{Authorization:'Bearer '+key,'Content-Type':'application/json'},body:data?JSON.stringify(data):undefined});const value=await response.json();if(!response.ok)throw Error(value.error||'请求失败');return value;}
 function renderPicker(group){
   const box=$('picks-'+group);const id=$(group).value;box.replaceChildren();
@@ -25,13 +26,25 @@ function renderPicker(group){
 }
 function render(s){
   state=s;$('login').hidden=true;$('settings').hidden=false;
-  for(const group of GROUPS){
-    const select=$(group);const keep=select.value;select.replaceChildren(new Option('暂不启用',''));
-    for(const p of s.providers.filter(p=>p.group===group)){const option=new Option(p.label+(p.blocked?' · 认证未通过':'')+(p.fetch_error?' · 拉取失败':''),p.id);option.disabled=!!p.blocked;select.add(option);}
-    select.value=s.selected[group]||keep||'';
-    renderPicker(group);
+  const groups=groupList(s);
+  const grid=document.querySelector('.grid');
+  grid.replaceChildren();
+  for(const g of groups){
+    const col=document.createElement('div');col.className='column';
+    const label=document.createElement('label');
+    label.append(document.createTextNode(g.name||g.id));
+    const select=document.createElement('select');select.id=g.id;
+    label.append(select);
+    const picker=document.createElement('div');picker.className='picker';picker.id='picks-'+g.id;
+    col.append(label,picker);grid.append(col);
+    select.replaceChildren(new Option('暂不启用',''));
+    for(const p of s.providers.filter(p=>p.group===g.id)){const option=new Option(p.label+(p.blocked?' · 认证未通过':'')+(p.fetch_error?' · 拉取失败':''),p.id);option.disabled=!!p.blocked;select.add(option);}
+    const picked=s.selected&&s.selected[g.id];
+    const one=Array.isArray(picked)?(picked[0]||''):(picked||'');
+    select.value=one||'';
+    select.onchange=()=>renderPicker(g.id);
+    renderPicker(g.id);
   }
-  for(const group of GROUPS)$(group).onchange=()=>renderPicker(group);
   $('warnings').textContent=s.providers.filter(p=>p.blocked||p.warning).map(p=>p.label+'：'+(p.blocked||p.warning)).join('\n');
   $('recheck').hidden=!s.providers.some(p=>p.blocked);
   if(Object.values(s.selected).includes('conflict'))$('warnings').textContent+='\n检测到多来源同时启用，请重新选择后保存。';
@@ -39,7 +52,7 @@ function render(s){
   if(!s.models.length)$('models').textContent='尚未暴露任何模型；请勾选上面的模型后保存。';
   $('client').textContent=s.client_connected?'客户端配置已指向本地网关；当前运行实例是否已加载需单独验收。':'Codex 尚未接入此网关。选定供应商后再接入；不会自动重启客户端。';
 }
-function payload(){const selected={},out={};for(const group of GROUPS){const id=$(group).value||null;selected[group]=id;if(id)out[id]=Array.from(picks[id]||[]);}return {revision:state.revision,selected,picks:out};}
+function payload(){const selected={},out={};for(const g of groupList(state)){const id=$(g.id).value||null;selected[g.id]=id? [id]:[];if(id)out[id]=Array.from(picks[id]||[]);}return {revision:state.revision,selected,picks:out};}
 $('login').onsubmit=async e=>{e.preventDefault();key=$('password').value;try{render(await api('/api/state'));$('password').value='';$('status').textContent='已读取当前路由';}catch(e){$('status').textContent=e.message;}};
 $('refresh').onclick=async()=>{try{render(await api('/api/state'));$('status').textContent='已刷新';}catch(e){$('status').textContent=e.message;}};
 $('save').onclick=async()=>{const b=$('save');b.disabled=true;$('status').textContent='正在保存并核验路由…';try{render(await api('/api/select',payload()));$('status').textContent='已保存，后续请求使用新路由。新增模型或能力需重启 Codex 刷新菜单。';}catch(e){$('status').textContent=e.message;}finally{b.disabled=false;}};

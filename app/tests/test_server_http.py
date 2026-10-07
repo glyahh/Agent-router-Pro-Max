@@ -236,6 +236,36 @@ finally:
     shutil.rmtree(_tmp, ignore_errors=True)
 
 print()
+print('== 6b. 错误日志删除（临时目录，不碰生产 logs）==')
+_real_logs = server.LOGS_DIR
+_logtmp = Path(tempfile.mkdtemp(prefix='prism-errlogs-'))
+try:
+    server.LOGS_DIR = _logtmp
+    (_logtmp / 'error-a.log').write_text('a', encoding='utf-8')
+    (_logtmp / 'error-b.log').write_text('b', encoding='utf-8')
+    (_logtmp / 'main.log').write_text('keep', encoding='utf-8')
+    st, _, body_bytes, _ = api('DELETE', '/api/error-logs/error-a.log')
+    payload = json.loads(body_bytes)
+    check('删除单个错误日志是 200', st, 200)
+    check('响应带回被删的文件名', payload.get('data', {}).get('deleted'), 'error-a.log')
+    check_true('error-a.log 已不在', not (_logtmp / 'error-a.log').exists())
+    check_true('删一个时 main.log 还在', (_logtmp / 'main.log').read_text(encoding='utf-8') == 'keep')
+    st, _, _, _ = api('DELETE', '/api/error-logs/main.log')
+    check('main.log 不能当错误日志删', st, 400)
+    check_true('拒绝之后 main.log 还在', (_logtmp / 'main.log').exists())
+    st, _, _, _ = api('DELETE', '/api/error-logs/..%2Fserver.py')
+    check('编码后的目录穿越删不掉', st, 400)
+    st, _, body_bytes, _ = api('DELETE', '/api/error-logs')
+    payload = json.loads(body_bytes)
+    check('一键删除是 200', st, 200)
+    check('一键删除只回报剩下的错误日志', payload.get('data', {}).get('deleted'), ['error-b.log'])
+    check_true('错误日志清完了', not list(_logtmp.glob('error-*.log')))
+    check_true('一键删除不动 main.log', (_logtmp / 'main.log').read_text(encoding='utf-8') == 'keep')
+finally:
+    server.LOGS_DIR = _real_logs
+    shutil.rmtree(_logtmp, ignore_errors=True)
+
+print()
 print('== 7. 端到端（真实 socket，随机回环端口）==')
 import socket
 _probe = socket.socket()

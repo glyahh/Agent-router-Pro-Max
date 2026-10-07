@@ -40,6 +40,8 @@ def read(name: str) -> str:
 CSS = read("app.css")
 APP_JS = read("app.js")
 HOME_JS = read("pages/home.js")
+FORM_JS = read("pages/source-form.js")
+MANAGE_JS = read("pages/manage.js")
 LOGS_JS = read("pages/logs.js")
 MONITOR_JS = read("pages/monitor.js")
 SETTINGS_JS = read("pages/settings.js")
@@ -175,6 +177,17 @@ class TestRenderedLayout(unittest.TestCase):
             o["overflows_container"],
             "宽表撑出容器：表格 %dpx > 容器 %dpx" % (o["table"], o["container"]))
 
+    def test_overview_card_layout(self):
+        """用量页总览指标卡：高度、大数字字号、图表区占宽（防回归）。"""
+        c = self.data.get("metric_card")
+        self.assertTrue(c, "夹具里没渲染出总览指标卡")
+        self.assertGreaterEqual(c["height"], 236, "卡片高度不足：%spx" % c["height"])
+        self.assertGreaterEqual(c["value_font"], 48, "大数字字号过小：%spx" % c["value_font"])
+        self.assertLessEqual(
+            abs(c["chart_ratio"] - 62), 2,
+            "图表区占宽偏离 62%%：%s%%" % c["chart_ratio"])
+        self.assertFalse(c["overflows"], "卡片内容撑出边界")
+
     def test_warn_notice_contrast_rendered(self):
         """warn 通告的对比度按**渲染结果**量（读 computed color/background），不是读变量。
 
@@ -235,25 +248,6 @@ class TestByteFormatUnified(unittest.TestCase):
         self.assertTrue(body, "没找到 size")
         unified = ("bytes(" in body) or ("GB" in body and "toFixed(1)" in body)
         self.assertTrue(unified, "size() 仍与 bytes() 规则分叉（缺 GB / 精度不一致）")
-
-
-class TestDurationFormat(unittest.TestCase):
-    """倒计时文案的补零策略自相矛盾。
-
-    现在错在哪：fmtAgo 里 `d+'d'+(h%24)+'h 后重置'` 不补零，`h+'h'+pad2(m%60)+'m'`
-    补零。
-    用户体验：同一列里并排出现 `1d4h 后重置` 与 `1h05m 后重置`，像是没写完。
-    改完转绿：天段与小时段补零策略一致。
-    """
-
-    def test_pad_policy_consistent(self):
-        body = func_body(USAGE_JS, "function fmtAgo(sec)")
-        self.assertTrue(body, "没找到 fmtAgo")
-        d_pad = bool(re.search(r"'d'\s*\+\s*pad2\(", body))
-        h_pad = bool(re.search(r"'h'\s*\+\s*pad2\(", body))
-        self.assertEqual(
-            d_pad, h_pad,
-            "天段补零=%s 小时段补零=%s，同一函数里两套写法" % (d_pad, h_pad))
 
 
 class TestDegradeNotesLayout(unittest.TestCase):
@@ -363,21 +357,20 @@ class TestSegmentedKeyboard(unittest.TestCase):
 
 
 class TestHomeChipsKeyboard(unittest.TestCase):
-    """首页推理等级芯片与渠道头药丸是 span + click。
+    """推理等级芯片与改渠道头必须能用键盘点到。
 
-    现在错在哪：home.js 用 h('span', {class:'lv'}) 与 h('span', {class:'ghead'})，
-    都没有 tabindex/role/keydown。
-    用户体验：配置来源时选默认等级、改渠道头这两个高频动作键盘做不到。
-    改完转绿：两者之一可聚焦（button 或 tabindex）。
+    等级芯片在共用表单 source-form.js。渠道头编辑从首页挪到管理页，入口是按钮。
+    首页上的 .ghead 只显示，不再承担编辑。
     """
 
     def test_level_chip_focusable(self):
-        self.assertTrue(re.search(r"h\('button'|tabindex", near(HOME_JS, "class: 'lv'")),
+        self.assertTrue(re.search(r"h\('button'|tabindex", near(FORM_JS, "class: 'lv'")),
                         "推理等级芯片仍不可聚焦")
 
-    def test_head_pill_focusable(self):
-        self.assertTrue(re.search(r"h\('button'|tabindex", near(HOME_JS, "class: 'ghead'")),
-                        "渠道头药丸仍不可聚焦")
+    def test_head_edit_is_a_button(self):
+        self.assertIn("function () { editHead(p); }", MANAGE_JS)
+        seg = near(MANAGE_JS, "editHead(p)")
+        self.assertTrue(re.search(r"h\('button'", seg), "改渠道头的入口不是按钮")
 
 
 # =============================================================== 交互与状态
@@ -408,9 +401,9 @@ class TestLevelChipKeepsFocus(unittest.TestCase):
     """
 
     def test_chip_toggle_does_not_rebuild_form(self):
-        i = HOME_JS.find("class: 'lv'")
+        i = FORM_JS.find("class: 'lv'")
         self.assertTrue(i > 0, "没找到等级芯片构造")
-        seg = HOME_JS[i:i + 900]
+        seg = FORM_JS[i:i + 900]
         end = seg.find("}, lv));")
         if end > 0:
             seg = seg[:end]
@@ -579,17 +572,39 @@ class TestLogsSurfaceError(unittest.TestCase):
 
 
 class TestUsageNumericColumns(unittest.TestCase):
-    """同一张表的数字列，一半等宽一半比例字体。
+    """用量数字刷新时不能左右跳。
 
-    现在错在哪：成功列用 `c n`（mono + tabular-nums），失败列只有 `c`，失败率列只有 `c`。
-    用户体验：30s 自动刷新时数字位数一变，失败/失败率列左右微跳，整表看着在抖。
-    改完转绿：三列同口径。
+    来源明细和长期历史的成功、失败写在同一行 .nums 里。
+    用户体验：30 秒自动刷新时数字位数一变，行尾数字左右微跳。
+    改完转绿：.nums 使用 tabular-nums。
     """
 
-    def test_failure_columns_use_mono(self):
-        self.assertTrue("c n' + (c.failed" in USAGE_JS, "来源表失败列缺等宽")
-        self.assertTrue("c n' + (it2.failed" in USAGE_JS, "历史表失败列缺等宽")
-        self.assertTrue("class=\"c n\">' + (tot ? failRate" in USAGE_JS, "失败率列缺等宽")
+    def test_count_lines_use_tabular_nums(self):
+        self.assertIn('class="nums"', USAGE_JS)
+        i = CSS.find(".usage-page .u-line .nums{")
+        self.assertGreater(i, 0, "用量数字行没有 .nums 规则")
+        self.assertIn("tabular-nums", CSS[i:i + 220])
+
+
+class TestCollapsedTreeActions(unittest.TestCase):
+    """首页默认收起后，展开、接入预览、来源跳转仍要能落到已挂上的节点。"""
+
+    def test_expand_redraws_instead_of_toggling_missing_nodes(self):
+        body = func_body(HOME_JS, "function expandAllNodes()")
+        self.assertIn("renderTree()", body)
+        self.assertNotIn("querySelectorAll('.gnode')", body)
+        self.assertNotIn("S.open['a:' + ag.id] = true", body)
+
+    def test_collapsed_row_does_not_clone_away_preview(self):
+        body = func_body(HOME_JS, "function agentNode(a, expanded)")
+        self.assertNotIn("cloneNode", body)
+        self.assertIn("接入预览", body)
+
+    def test_highlight_opens_agent_and_group(self):
+        body = func_body(HOME_JS, "function doHighlight(p)")
+        self.assertIn("getActiveAgentId()", body)
+        self.assertIn("'a:' + aid", body)
+        self.assertIn("'g:' + aid + '/' + gid", body)
 
 
 if __name__ == "__main__":

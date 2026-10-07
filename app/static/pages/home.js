@@ -4,8 +4,8 @@
  * 四级节点树：
  *
  *     Agent（Codex / Claude Code / Claude Code 桌面端 / opencode / Hermes）
- *       └ 分组（GPT / DEEPSEEK / GLM）
- *           └ 来源（SRAPI、OpenAI 官方 …）        ← 默认只展到这一层
+ *       └ 分组（来自路由计划，不再写死）
+ *           └ 来源（SRAPI、OpenAI 官方 …）        ← 点分组才展开
  *               └ 模型（srapi/gpt-5.6-sol …）      ← 点来源才展开
  *
  * 契约见 static/app.js 顶部的注释。本页要用 ctx.api / ctx.state / ctx.dialog /
@@ -14,8 +14,8 @@
  * ── 这一页的范围（别处重复了就删）─────────────────────────────────────
  * 去掉：原来那张 9 列的「所有来源」表。它的排序/统计能力在**监控页**已经有了
  *       （monitor.js 的 sourcesSection），首页不再摆第二份。
- * 保留：底部「＋ 添加来源」表单。
- * 新增：节点树、内联的来源动作（测试/编辑/删除/改渠道头）、Agent 接入。
+ * 保留：底部「＋ 添加来源」表单、节点树、测试、代理端接入预览。
+ * 不在这页：来源的编辑、删除、改渠道头，以及分组的增删改（在管理页）。
  *
  * ── 三个容易改错的点（都写在 docs/DEV-RULES.md 里）────────────────────
  *  1. 样式：树本身的样式在 app.css 的「首页节点树」段，本页只注入**页面独有**的
@@ -30,15 +30,11 @@
 (function () {
   'use strict';
 
-  var GROUPS = [
-    { id: 'gpt', name: 'GPT 中转站' },
-    { id: 'deepseek', name: 'DEEPSEEK' },
-    { id: 'glm', name: 'GLM' }
-  ];
   var LEVELS = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
   var HEAD_RE = /^[a-z0-9][a-z0-9._-]{0,23}$/;
   var STYLE_ID = 'prism-home-style';
-  var OPEN_KEY = 'prism.graph.open';
+  // 旧键 prism.graph.open 里写过「默认展开第一个已接入」，那不是用户点的。换键后首次进来整棵树收起。
+  var OPEN_KEY = 'prism.graph.open2';
 
   // ── 页内样式：只放树以外、本页独有的东西。树在 app.css。 ─────────────────
   var CSS = [
@@ -135,7 +131,6 @@
   // h/clear 用壳的单一实现（app.js）；原先各页一份私有副本，修 bug 不传播（审查 ME-10）。
   // 壳的 h 是这里的超集：value/checked/disabled 对新建元素语义等效，style 对象/字符串都收。
   var h = window.Prism.h, clear = window.Prism.clear, append = window.Prism.append;
-  function option(value, label) { return h('option', { value: value, text: label }); }
   function spin() { return h('span', { class: 'spin' }); }
   function shortHost(url) {
     if (!url) return '—';
@@ -149,6 +144,17 @@
   function clientId(head, alias) {
     var x = (head || '').trim();
     return x ? x + HEAD_SEP + alias : alias;
+  }
+  // Claude Code 桌面端和 CLI 写同一个 settings.json，渠道头共用 claude-code 这一份。
+  var HEAD_OWNER = { 'claude-code-desktop': 'claude-code' };
+  function effectiveHead(agentId, p) {
+    var owner = HEAD_OWNER[agentId] || agentId;
+    var stored = S.state && S.state.agent_heads;
+    var slot = stored && stored[owner];
+    if (slot && Object.prototype.hasOwnProperty.call(slot, p.id)) {
+      return String(slot[p.id] || '').trim();
+    }
+    return String((p && p.head) || '').trim();
   }
 
   // ── API 封装（与 config.js 同口径：壳的 api 优先，其次 window.Prism.api）──
@@ -193,17 +199,16 @@
     globalFilter: '',
     showTechDetails: false
   };
-  var $tree, $treeHint, $addsrc, $form, $acts, $msgBox, $stickyBar,
+  var $tree, $treeHint, $addsrc, $form, $acts, $stickyBar,
       $globalToolbar, $globalFilterInp, $filterBadge, $clearFilterBtn, $unreadableBox;
 
   // unmount 会把 $tree/$form/$acts 置 null，而多处**异步回调**直接调这些渲染函数
-  // （saveRouting 的失败回调、pullModels、useSnapshot、previewAgent、editHead、testAll 的
+  // （saveRouting 的失败回调、pullModels、useSnapshot、previewAgent、editHead、applyToAgents 的
   // step…）。只守 renderAll 不够 —— 那些路径根本不经过它（复查轮 6 的 3-1）。
   // 所以三个入口各守一次：谁调都安全。
   function _unmounted() { return !S.wrap; }
 
-  // ── 展开状态持久化（默认：只展开第一个 agent；分组与来源也默认展开，
-  //     于是"不点击的时候"看到的正好是 Agent + 分组 + 来源三层，模型层收起）──
+  // ── 展开状态持久化。没点过的节点一律收起：先只看见代理端名单。
   function loadOpen() {
     try {
       var raw = JSON.parse(localStorage.getItem(OPEN_KEY) || '{}');
@@ -223,6 +228,13 @@
   }
 
   // ── 派生数据 ─────────────────────────────────────────────────────────────
+  function currentGroups() {
+    var raw = S.state && S.state.groups;
+    if (!Array.isArray(raw)) return [];
+    return raw.filter(function (g) { return g && g.id; }).map(function (g) {
+      return { id: g.id, name: g.name || g.id };
+    });
+  }
   function providers() { return (S.state && S.state.providers) || []; }
   function byId(id) {
     var ps = providers(), i;
@@ -239,10 +251,6 @@
     return false;
   }
   function enabledCount(g) { return (S.sel[g] || []).length; }
-  function gName(id) {
-    for (var i = 0; i < GROUPS.length; i++) if (GROUPS[i].id === id) return GROUPS[i].name;
-    return id || '—';
-  }
   function codexUsable(alias) {
     var low = String(alias).toLowerCase();
     return low.indexOf('image') < 0 && low.indexOf('-expires-on-') < 0;
@@ -274,21 +282,21 @@
     var m = /\bHTTP\s*(\d{3})\b/.exec(String(text || ''));
     return m ? 'HTTP ' + m[1] : null;
   }
-  function shortRev(rev) { return rev ? String(rev).slice(0, 8) : '—'; }
 
   // ── 渲染：动作条 + 消息 ──────────────────────────────────────────────────
   function updateStickyBar() {
     if (!$stickyBar) return;
     var dirty = isDirty();
-    $stickyBar.style.display = dirty ? 'flex' : 'none';
-    if (!dirty) return;
-    $stickyBar.className = 'home-sticky-bar dirty';
+    // 失败原因只留在这条吸底条。操作区再画一条横幅，会和这里叠成两句一样的报错。
+    $stickyBar.style.display = (dirty || !!S.msg) ? 'flex' : 'none';
+    if (!dirty && !S.msg) return;
+    $stickyBar.className = 'home-sticky-bar' + (dirty ? ' dirty' : '');
 
     var on = 0, i;
-    for (i = 0; i < GROUPS.length; i++) on += enabledCount(GROUPS[i].id);
+    for (i = 0; i < currentGroups().length; i++) on += enabledCount(currentGroups()[i].id);
     var dirtyCount = 0;
-    for (var gi = 0; gi < GROUPS.length; gi++) {
-      var g = GROUPS[gi].id;
+    for (var gi = 0; gi < currentGroups().length; gi++) {
+      var g = currentGroups()[gi].id;
       if ((S.sel[g] || []).join('\u0000') !== (S.selOrigin[g] || []).join('\u0000')) dirtyCount++;
     }
     for (var pid in S.draft) {
@@ -330,6 +338,17 @@
       if (S.busy) saveBtn.appendChild(spin());
       else saveBtn.textContent = saveText;
     }
+
+    var sbMsg = $stickyBar.querySelector('[data-role="sb-msg"]');
+    if (!sbMsg) {
+      sbMsg = h('span', { class: 'sb-msg', data: { role: 'sb-msg' } });
+      $stickyBar.querySelector('.sb-left').appendChild(sbMsg);
+    }
+    sbMsg.className = 'sb-msg' + (S.msg ? ' ' + S.msg.kind : '');
+    sbMsg.textContent = S.msg ? S.msg.text : '';
+    sbMsg.title = S.msg ? S.msg.text : '';
+    sbMsg.style.display = S.msg ? '' : 'none';
+    badge.style.display = dirty ? '' : 'none';
   }
 
   // 「刷新」在脏状态下会把未保存的改动无声覆盖掉，先问一句再走
@@ -353,45 +372,22 @@
   function renderActions() {
     if (_unmounted()) return;
     clear($acts);
-    if ($msgBox && $msgBox.parentNode) $msgBox.parentNode.removeChild($msgBox);
-    $msgBox = null;
-    if (S.msg) {
-      $msgBox = h('div', { class: 'msg ' + S.msg.kind },
-        h('span', { class: 'txt', text: S.msg.text }),
-        h('button', { class: 'btn sm', type: 'button', onclick: function () { S.msg = null; renderActions(); } }, '关闭'));
-    }
-    var dirty = isDirty();
     $acts.appendChild(h('div', { class: 'home-acts' },
       h('button', {
         class: 'btn pri', type: 'button', disabled: !!S.busy || !S.state, onclick: saveRouting
       }, S.busy ? spin() : '保存路由'),
       h('button', { class: 'btn', type: 'button', disabled: !!S.busy, onclick: function () { confirmDiscard(refreshFromGateway); } }, '刷新'),
       h('button', {
-        class: 'btn', type: 'button', disabled: !!S.busy || !providerRows().length, onclick: testAll
-      }, '测试全部来源'),
+        class: 'btn', type: 'button', disabled: !!S.busy || !S.state,
+        title: '把当前选择保存到网关，并写进各客户端的配置文件',
+        onclick: applyToAgents
+      }, '应用配置'),
       h('span', { class: 'hspacer' })
     ));
-    if ($msgBox) $acts.insertBefore($msgBox, $acts.firstChild);
     updateStickyBar();
   }
   function flash(kind, text) { S.msg = { kind: kind, text: text }; renderActions(); }
 
-  // 所有来源产出的客户端可见 ID（含未启用的，口径同 regen_catalog）
-  function clientIds() {
-    var out = [], i, j;
-    var ps = providerRows();
-    for (i = 0; i < ps.length; i++) {
-      var p = ps[i], ids = p.client_ids;
-      if (!ids) {
-        ids = [];
-        (p.expose || []).forEach(function (a) {
-          if (typeof a === 'string' && a && a.slice(0, 2) !== 'A/') ids.push(clientId(p.head, a));
-        });
-      }
-      for (j = 0; j < ids.length; j++) if (out.indexOf(ids[j]) < 0) out.push(ids[j]);
-    }
-    return out.sort();
-  }
   function providerRows() {
     if (S.sources && S.sources.length) return S.sources;
     return providers().map(function (p) {
@@ -403,20 +399,14 @@
     });
   }
   function isFormDirty() {
-    if (!S.form) return false;
-    var f = S.form;
-    return !!((f.base_url && f.base_url.trim()) ||
-              (f.api_key && f.api_key.trim()) ||
-              (f.label && f.label.trim()) ||
-              (f.head && f.head.trim()) ||
-              (f.models && f.models.some(function (m) { return m && m.alias && m.alias.trim(); })));
+    return !!(sourceForm && sourceForm.isDirty());
   }
 
   function isDirty() {
     if (isFormDirty()) return true;
     var i;
-    for (i = 0; i < GROUPS.length; i++) {
-      var g = GROUPS[i].id;
+    for (i = 0; i < currentGroups().length; i++) {
+      var g = currentGroups()[i].id;
       if ((S.sel[g] || []).join('\u0000') !== (S.selOrigin[g] || []).join('\u0000')) return true;
     }
     for (var pid in S.draft) {
@@ -438,36 +428,25 @@
   }
 
   function expandAllNodes() {
+    // 手风琴只显示一个代理端。全部写成展开的话，重画时会落到名单里的第一个，
+    // 收起态下子节点还没挂上，只改 class 也看不到分组。
+    var aId = getActiveAgentId();
+    var k;
+    for (k in S.open) {
+      if (k.indexOf('a:') === 0) S.open[k] = false;
+    }
+    if (aId) S.open['a:' + aId] = true;
     (S.agents || []).forEach(function (ag) {
-      S.open['a:' + ag.id] = true;
-      for (var i = 0; i < GROUPS.length; i++) {
-        S.open['g:' + ag.id + '/' + GROUPS[i].id] = true;
+      for (var i = 0; i < currentGroups().length; i++) {
+        S.open['g:' + ag.id + '/' + currentGroups()[i].id] = true;
       }
     });
-    var aId = getActiveAgentId();
-    if (aId) S.open['a:' + aId] = true;
     var provs = providerRows();
     for (var j = 0; j < provs.length; j++) {
       S.open['s:' + provs[j].id] = true;
     }
     saveOpen();
-
-    if ($tree) {
-      var nodes = $tree.querySelectorAll('.gnode');
-      for (var k = 0; k < nodes.length; k++) {
-        var el = nodes[k];
-        el.classList.add('open');
-        var grow = el.firstElementChild;
-        if (grow && grow.classList.contains('grow')) {
-          grow.setAttribute('aria-expanded', 'true');
-        }
-        if (typeof el._mountKids === 'function') {
-          el._mountKids();
-        }
-      }
-    } else {
-      renderTree();
-    }
+    renderTree();
   }
 
   function collapseAllNodes() {
@@ -538,6 +517,15 @@
     }
 
     if ($clearFilterBtn) $clearFilterBtn.style.display = '';
+
+    // 树默认收起时来源行还没挂上。搜索先展开当前代理端，分组仍收着，匹配项再由下面打开。
+    if ($tree && !$tree.querySelector('.gnode.lv3')) {
+      var aid = getActiveAgentId();
+      if (aid && !isOpen('a:' + aid, false)) {
+        S.open['a:' + aid] = true;
+        renderTree();
+      }
+    }
 
     var provs = providerRows();
     var totalMatches = 0;
@@ -683,18 +671,6 @@
   }
 
   // ── 渲染：节点树 ─────────────────────────────────────────────────────────
-  function toggle(key, dflt, rerender) {
-    setOpen(key, !isOpen(key, dflt));
-    (rerender || renderTree)();
-  }
-
-  // 用户有没有对 agent 层做过选择。没做过才套用"默认展开第一个接入的"，
-  // 否则把最后一个 agent 收起之后会被默认逻辑立刻又摊开，收不起来。
-  function hasAgentChoice() {
-    for (var k in S.open) if (k.indexOf('a:') === 0) return true;
-    return false;
-  }
-
   function node(cls, key, dflt, inner, kids, opts) {
     opts = opts || {};
     var open = isOpen(key, dflt);
@@ -756,16 +732,6 @@
     for (i = 0; i < S.agents.length; i++) {
       if (isOpen('a:' + S.agents[i].id, false)) { openAgent = S.agents[i].id; break; }
     }
-    if (!openAgent && !hasAgentChoice()) {
-      // 默认展开第一个"已接入"的；都没有就展开第一个存在的
-      var pick = null;
-      for (i = 0; i < S.agents.length; i++) {
-        if (S.agents[i].connected) { pick = S.agents[i].id; break; }
-      }
-      if (!pick) for (i = 0; i < S.agents.length; i++) if (S.agents[i].exists) { pick = S.agents[i].id; break; }
-      openAgent = pick || (S.agents[0] && S.agents[0].id);
-      if (openAgent) { S.open['a:' + openAgent] = true; saveOpen(); }
-    }
     var frag = document.createDocumentFragment();
     for (i = 0; i < S.agents.length; i++) {
       frag.appendChild(agentNode(S.agents[i], S.agents[i].id === openAgent));
@@ -806,9 +772,11 @@
     if (expanded) {
       n.classList.add('open');
     } else {
-      // 覆盖默认的 toggle：这里要用互斥语义
-      var clone = row.cloneNode(true);
-      row.parentNode.replaceChild(clone, row);
+      // 子树先不挂，但保留箭头。不要 clone 这一行，否则「接入预览」的点击会丢。
+      n.classList.add('has-kids', 'clickable');
+      row.setAttribute('role', 'button');
+      row.setAttribute('tabindex', '0');
+      row.setAttribute('aria-expanded', 'false');
       var doToggle = function (e) {
         if (e && e.target && e.target.closest && e.target.closest('input,.gbtn,.ghead')) return;
         for (var k in S.open) if (k.indexOf('a:') === 0) S.open[k] = false;
@@ -816,12 +784,35 @@
         saveOpen();
         renderTree();
       };
-      clone.addEventListener('click', doToggle);
-      clone.addEventListener('keydown', function (e) {
+      row.addEventListener('click', doToggle);
+      row.addEventListener('keydown', function (e) {
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); doToggle(e); }
       });
     }
     return n;
+  }
+
+  function headOwnerConnected(agentId) {
+    // 桌面端和 CLI 共用 claude-code 这一份渠道头，有一边已接入就算。
+    var owner = agentId === 'claude-code-desktop' ? 'claude-code' : agentId;
+    var list = S.agents || [];
+    for (var i = 0; i < list.length; i++) {
+      var id = list[i].id;
+      var o = id === 'claude-code-desktop' ? 'claude-code' : id;
+      if (o === owner && list[i].connected) return true;
+    }
+    return false;
+  }
+
+  function headWarnShown(agentId, gid) {
+    if (!agentId || agentId === 'copilot-agent') return false;
+    // 没接入的代理端不占干净模型 ID，不在这里预警。
+    if (!headOwnerConnected(agentId)) return false;
+    if (enabledCount(gid) <= 1) return false;
+    var heads = groupProvs(gid).filter(function (p) {
+      return isOn(p.id) && !effectiveHead(agentId, p);
+    });
+    return heads.length > 1;
   }
 
   function updateGroupStatus(gid) {
@@ -833,6 +824,13 @@
       gTags[i].textContent = on ? (on + ' 启用') : '';
       gTags[i].style.display = on ? '' : 'none';
     }
+    // 组级警告跟着一起就地切换：勾选来源只改行标签与计数、不重渲染整棵树，警告若挂在
+    // 渲染树里就得等下一次重渲染才出现 —— 用户勾完直接点保存、被后端拒了却看不到预警。
+    var warns = $tree.querySelectorAll('[data-role="g-headwarn"][data-gid="' + gid + '"]');
+    for (i = 0; i < warns.length; i++) {
+      var aid = warns[i].getAttribute('data-agent');
+      warns[i].style.display = headWarnShown(aid, gid) ? '' : 'none';
+    }
   }
 
   function updateTreeHint() {
@@ -842,7 +840,20 @@
   }
 
   function groupNodes(a) {
-    return GROUPS.map(function (g) {
+    var groups = currentGroups();
+    if (!groups.length) {
+      return [h('div', { class: 'gnote' }, [
+        h('span', { text: '暂无分组' }),
+        h('button', {
+          class: 'gbtn', type: 'button',
+          onclick: function (e) {
+            e.stopPropagation();
+            location.hash = '#/manage';
+          }
+        }, '创建分组')
+      ])];
+    }
+    return groups.map(function (g) {
       var provs = groupProvs(g.id);
       var on = enabledCount(g.id);
       var gStatusTag = h('span', {
@@ -860,19 +871,20 @@
       var kids = provs.map(function (p) { return sourceNode(a, g, p); });
       if (!kids.length) {
         kids = [h('div', { class: 'gnote', text: '无来源' })];
-      } else if (on > 1) {
-        var heads = provs.filter(function (p) { return isOn(p.id) && !(p.head || '').trim(); });
-        if (heads.length > 1) {
-          kids = kids.concat([h('div', { class: 'gnote bad', text: '存在重复无渠道头来源，请设置渠道头' })]);
-        }
       }
-      return node('lv2', 'g:' + a.id + '/' + g.id, true, inner, kids);
+      // 警告节点常驻，显隐由 updateGroupStatus 就地切换（勾选来源不走整树重渲染）。
+      kids = kids.concat([h('div', {
+        class: 'gnote bad', text: '存在重复无渠道头来源，请设置渠道头',
+        style: headWarnShown(a.id, g.id) ? null : { display: 'none' },
+        data: { role: 'g-headwarn', gid: g.id, agent: a.id }
+      })]);
+      return node('lv2', 'g:' + a.id + '/' + g.id, false, inner, kids);
     });
   }
 
   function sourceNode(a, g, p) {
     var on = isOn(p.id);
-    var head = (p.head || '').trim();
+    var head = effectiveHead(a.id, p);
     var usable = modelList(p);
     var exposed = (S.draft[p.id] || []).filter(function (x) { return usable.indexOf(x) >= 0; });
     var statusTag = h('span', {
@@ -900,16 +912,17 @@
       renderActions();
     });
 
-    var headEl = h('button', {
-      type: 'button',
-      // 无头 = 该分组的主来源，它保留干净的模型 ID。给它明确的「主」标记
-      class: 'ghead' + (head ? '' : ' none main'),
-      title: head
-        ? ('渠道头: ' + head + '（客户端 ID: ' + head + '/' + (usable[0] || '模型') + '）')
-        : '主来源（保留原始模型 ID）',
-      text: head || '主'
-    });
-    headEl.addEventListener('click', function (e) { e.stopPropagation(); editHead(a, p); });
+    var headEl = null;
+    if (a.id !== 'copilot-agent') {
+      // 渠道头在管理页改。这里只显示，点了不弹框。
+      headEl = h('span', {
+        class: 'ghead' + (head ? '' : ' none main'),
+        title: head
+          ? ('渠道头: ' + head + '（客户端 ID: ' + head + '/' + (usable[0] || '模型') + '）')
+          : '主来源（保留原始模型 ID）',
+        text: head || '主'
+      });
+    }
 
     var note = null;
     if (p.blocked) note = h('div', { class: 'gnote bad', text: '来源已阻断：' + p.blocked });
@@ -1001,7 +1014,6 @@
       h('span', { class: 'gacts' }, sourceButtons(a, p))
     ];
     var n = node('lv3', key, false, inner, kids, {
-      pinned: S.confirmDel === p.id,
       onExpand: function () {
         if (typeof n._mountKids === 'function') n._mountKids();
       }
@@ -1026,29 +1038,8 @@
       disabled: !!S.testing[p.id],
       onclick: function (e) { e.stopPropagation(); runTest(p.id); }
     }, S.testing[p.id] ? '…' : '测试')];
-    if (isCustom(p)) {
-      out.push(h('button', {
-        class: 'gbtn', type: 'button', title: '编辑来源',
-        onclick: function (e) { e.stopPropagation(); openForm('edit', p.id); }
-      }, '编辑'));
-      if (S.confirmDel === p.id) {
-        out.push(h('button', {
-          class: 'gbtn danger', type: 'button', title: '确认删除此来源',
-          onclick: function (e) { e.stopPropagation(); removeSource(p.id); }
-        }, '确认删除'));
-        out.push(h('button', {
-          class: 'gbtn', type: 'button',
-          onclick: function (e) { e.stopPropagation(); S.confirmDel = null; renderTree(); }
-        }, '取消'));
-      } else {
-        out.push(h('button', {
-          class: 'gbtn danger', type: 'button',
-          title: '删除来源',
-          onclick: function (e) { e.stopPropagation(); S.confirmDel = p.id; renderTree(); }
-        }, '删除'));
-      }
-    } else {
-      out.push(h('span', { class: 'gmeta', title: '内置来源，支持连通性测试与配置渠道头', text: '内置' }));
+    if (!isCustom(p)) {
+      out.push(h('span', { class: 'gmeta', text: '内置' }));
     }
     return out;
   }
@@ -1197,8 +1188,10 @@
         
         return S.ctx.dialog({ title: '接入 ' + pv.label, body: body, okText: '知道了', cancelText: '关闭' });
       }
-      body.appendChild(h('div', { class: 'note', style: 'padding:0 0 10px' },
-        '网关地址 ' + pv.gateway_base + ' · 会写进客户端配置的模型 ' + pv.models_count + ' 个'));
+      if (!pv.direct) {
+        body.appendChild(h('div', { class: 'note', style: 'padding:0 0 10px' },
+          '网关地址 ' + pv.gateway_base + ' · 会写进客户端配置的模型 ' + pv.models_count + ' 个'));
+      }
       if (pv.reformat_note) {
         body.appendChild(h('div', { class: 'msg warn' }, h('span', { class: 'txt', text: pv.reformat_note })));
       }
@@ -1235,40 +1228,6 @@
     });
   }
 
-  // ── 渠道头：点一下就改（走 PUT /api/sources/{id}/head，纯 plan 字段）──────
-  function editHead(a, p) {
-    if (!S.ctx || !S.ctx.dialog) return;
-    var cur = (p.head || '').trim();
-    var inp = h('input', { value: cur, placeholder: '例如 srapi（留空 = 无头主来源）' });
-    var body = h('div', null,
-      h('div', { class: 'note', style: 'padding:0 0 10px' },
-        '客户端模型 ID: ' + (cur ? cur + '/' : '') + (modelList(p)[0] || '模型')),
-      h('div', { class: 'f' }, h('label', null, '渠道头'), inp),
-      h('div', { class: 'note' },
-        '同一分组仅允许一个无头主来源。保存路由后生效。'));
-    setTimeout(function () { try { inp.focus(); inp.select(); } catch (e) {} }, 0);
-    S.ctx.dialog({ title: '渠道头 · ' + (p.label || p.id), body: body, okText: '保存' })
-      .then(function (yes) {
-        if (!yes) return null;
-        var want = String(inp.value || '').trim();
-        if (want === cur) { flash('info', '渠道头未修改'); return null; }
-        if (want && !HEAD_RE.test(want)) {
-          flash('bad', '渠道头「' + want + '」不合法：只能用 24 个字符以内的小写字母、数字、'
-            + '点、下划线、连字符，不能含斜杠或空格。');
-          return null;
-        }
-        S.busy = true; renderActions();
-        return api('/api/sources/' + enc(p.id) + '/head', { method: 'PUT', body: { head: want } })
-          .then(function (r) {
-            S.busy = false;
-            S.msg = null;
-            return reload();
-          }).catch(function (e) {
-            S.busy = false;
-            flash('bad', '改渠道头失败：' + errText(e));
-          });
-      });
-  }
 
   // ── 测试 ─────────────────────────────────────────────────────────────────
   function runTest(pid) {
@@ -1281,29 +1240,158 @@
         S.testing[pid] = false; renderTree();
       });
   }
-  function testAll() {
-    var rows = providerRows().slice();
-    if (!rows.length) return;
-    S.busy = true; renderActions();
-    var i = 0;
-    (function step() {
-      if (i >= rows.length) {
-        S.busy = false;
-        var ok = rows.filter(function (r) { return S.test[r.id] && S.test[r.id].ok; }).length;
-        flash(ok === rows.length ? 'ok' : 'warn',
-          '测试完毕：' + ok + '/' + rows.length + ' 个来源连通。');
-        return;
-      }
-      return runTest(rows[i++].id).then(step);
-    })();
+  function writableAgents() {
+    var seen = {}, list = [];
+    (S.agents || []).forEach(function (a) {
+      if (!a.implemented || !a.exists) return;
+      var key = a.config_path || a.id;   // claude-code 与桌面端共用一份文件，只写一次
+      if (seen[key]) return;
+      seen[key] = 1;
+      list.push(a);
+    });
+    return list;
+  }
+
+  // 先选目标（某一个客户端 / 全部）再执行。写入前仍要过一次变更预览，不减步骤。
+  function pickAgents(list) {
+    var picked = list.slice(), rows = [];
+    function refresh() {
+      rows.forEach(function (r) {
+        var on = r.agent ? picked.indexOf(r.agent) >= 0 : picked.length === list.length;
+        r.el.className = 'r pick' + (on ? ' on' : '');
+      });
+    }
+    var allRow = { agent: null, el: h('div', { class: 'r pick on', role: 'button', tabindex: '0' },
+      h('span', { class: 'n' }, h('span', { class: 't', text: '全部客户端（' + list.length + ' 个）' }))) };
+    allRow.el.addEventListener('click', function () { picked = list.slice(); refresh(); });
+    rows.push(allRow);
+    list.forEach(function (a) {
+      var row = { agent: a, el: h('div', { class: 'r pick', role: 'button', tabindex: '0' },
+        h('span', { class: 'n' }, [
+          h('span', { class: 't', text: a.label + '  ' }),
+          h('span', { class: 'f', text: ' ' + (a.config_display || a.config_path || '') })
+        ])) };
+      row.el.addEventListener('click', function () { picked = [a]; refresh(); });
+      rows.push(row);
+    });
+    rows.forEach(function (r) {
+      r.el.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); r.el.click(); }
+      });
+    });
+    var body = h('div', null,
+      h('div', { class: 'note', style: 'padding:0 0 10px' },
+        '选一个客户端或全部，下一步列出将要写入的改动。'),
+      h('div', { class: 'pv' }, rows.map(function (r) { return r.el; })));
+    return S.ctx.dialog({
+      title: '应用到客户端配置', body: body, okText: '应用到所选', cancelText: '取消'
+    }).then(function (yes) { return yes ? picked : null; });
+  }
+
+  // ── 应用配置：把当前选择真正落到各客户端的配置文件里 ────────────────────────
+  //
+  // 顺序不能反：客户端配置里的模型清单来自 routing-plan.json 的 expose，而 expose 由
+  // 「保存路由」写入 —— 没落盘就同步不到客户端。脏的时候先保存，保存失败就停住（原因
+  // 已经显示在吸底条上），不拿半旧的数据去改用户的客户端配置。
+  function applyToAgents() {
+    if (!S.state || S.busy) return;
+    if (!S.ctx || typeof S.ctx.dialog !== 'function') return;
+    var list = writableAgents();
+    if (!list.length) { flash('warn', '没有可写入的客户端配置。'); return; }
+    pickAgents(list).then(function (picked) {
+      if (!picked || !picked.length) return null;
+      var start = isDirty() ? saveRouting() : Promise.resolve(true);
+      return start.then(function (saved) {
+        if (!saved) return null;
+        S.busy = true; renderActions();
+        return previewAgents(picked);
+      }).then(function (items) {
+        if (!items) return null;
+        return confirmApply(items).then(function (yes) {
+          if (!yes) { S.busy = false; renderActions(); return null; }
+          return runConnects(items);
+        });
+      }).then(function (results) {
+        S.busy = false; renderActions();
+        if (!results) return;
+        var bad = results.filter(function (r) { return r.error; });
+        if (bad.length) {
+          flash('bad', '应用失败：' + bad.map(function (r) {
+            return r.agent.label + '（' + r.error + '）';
+          }).join('；'));
+        }
+        return reload();
+      }).catch(function (e) {
+        S.busy = false; S.agentBusy = null;
+        flash('bad', '应用配置失败：' + errText(e));
+      });
+    });
+  }
+
+  function previewAgents(list) {
+    var out = [], i = 0;
+    function step() {
+      if (i >= list.length) { S.agentBusy = null; renderTree(); return out; }
+      var a = list[i++];
+      S.agentBusy = a.id; renderTree();
+      return api('/api/connect/preview', { method: 'POST', body: { agent: a.id } })
+        .then(function (pv) { out.push({ agent: a, preview: pv, error: null }); return step(); })
+        .catch(function (e) { out.push({ agent: a, preview: null, error: errText(e) }); return step(); });
+    }
+    return step();
+  }
+
+  function confirmApply(items) {
+    var willWrite = 0;
+    var box = h('div', { class: 'pv' });
+    items.forEach(function (it) {
+      var pv = it.preview, state, cls = '';
+      if (it.error) { state = '读不到：' + it.error; cls = 'bad'; }
+      else if (pv.blocked) { state = pv.blocked; cls = 'bad'; }
+      else if (!(pv.changes || []).length) { state = '已是最新，无需改动'; }
+      else { state = '写 ' + pv.changes.length + ' 处变更'; willWrite++; }
+      box.appendChild(h('div', { class: 'r' }, h('span', { class: 'n' }, [
+        h('span', { class: 't', text: it.agent.label + '  ' }),
+        h('span', { class: 'f', text: ' ' + (it.agent.config_display || it.agent.config_path || '') + '  ' }),
+        h('span', { class: 't' + (cls ? ' ' + cls : ''), text: state })
+      ])));
+    });
+    var body = h('div', null,
+      h('div', { class: 'note', style: 'padding:0 0 10px' },
+        willWrite ? ('改写 ' + willWrite + ' 个客户端的配置文件，原文件先备份。') : '没有需要写入的改动。'),
+      box,
+      h('div', { class: 'note' }, '写入后需重启对应客户端生效。'));
+    return S.ctx.dialog({
+      title: '应用到客户端配置', body: body,
+      okText: willWrite ? '确认应用' : '知道了', cancelText: '取消', danger: true
+    });
+  }
+
+  function runConnects(items) {
+    var todo = items.filter(function (it) {
+      return !it.error && it.preview && !it.preview.blocked && (it.preview.changes || []).length;
+    });
+    var out = [], i = 0;
+    function step() {
+      if (i >= todo.length) { S.agentBusy = null; renderTree(); return out; }
+      var it = todo[i++];
+      S.agentBusy = it.agent.id; renderTree();
+      // codex 走既有的 connect_client 路径（认 revision），其余适配器认 confirm —— 两个都带上。
+      return api('/api/connect', {
+        method: 'POST', timeout: 30000,
+        body: { agent: it.agent.id, confirm: true, revision: S.state.revision }
+      }).then(function () { out.push({ agent: it.agent, error: null }); return step(); })
+        .catch(function (e) { out.push({ agent: it.agent, error: errText(e) }); return step(); });
+    }
+    return step();
   }
 
   // ── 保存路由 ─────────────────────────────────────────────────────────────
   function saveRouting() {
-    if (!S.state || S.busy) return;
+    if (!S.state || S.busy) return Promise.resolve(false);
     var selected = {}, i;
-    for (i = 0; i < GROUPS.length; i++) {
-      selected[GROUPS[i].id] = (S.sel[GROUPS[i].id] || []).slice();
+    for (i = 0; i < currentGroups().length; i++) {
+      selected[currentGroups()[i].id] = (S.sel[currentGroups()[i].id] || []).slice();
     }
     var picks = {};
     for (var pid in S.draft) {
@@ -1313,18 +1401,20 @@
       }
     }
     S.busy = true; renderActions();
-    api('/api/select', { method: 'POST', timeout: 90000, body: { revision: S.state.revision, selected: selected, picks: picks } })
+    // 返回值给「应用配置」用：保存没成就别去改客户端配置。按钮 onclick 不看它，无副作用。
+    return api('/api/select', { method: 'POST', timeout: 90000, body: { revision: S.state.revision, selected: selected, picks: picks } })
       .then(function (data) {
         applyState(data);
         S.busy = false;
         S.msg = null;
         return api('/api/sources').catch(function () { return null; });
       })
-      .then(function (s) { if (Array.isArray(s)) S.sources = s; renderAll(); })
+      .then(function (s) { if (Array.isArray(s)) S.sources = s; renderAll(); return true; })
       .catch(function (e) {
         S.busy = false;
         S.msg = { kind: 'bad', text: '保存失败：' + errText(e) };
         renderActions();
+        return false;
       });
   }
 
@@ -1333,7 +1423,7 @@
     if (!data || typeof data !== 'object') return;
     S.state = data;
     S.sel = {}; S.selOrigin = {};
-    GROUPS.forEach(function (g) {
+    currentGroups().forEach(function (g) {
       var v = data.selected ? data.selected[g.id] : null;
       var arr = Array.isArray(v) ? v.slice() : (typeof v === 'string' && v ? [v] : []);
       S.sel[g.id] = arr.slice();
@@ -1398,349 +1488,44 @@
       }))));
   }
 
-  // ── 底部：添加来源（保留。原来那张「所有来源」9 列表已去掉，
-  //     来源的排序/统计在监控页）─────────────────────────────────────────
-  function blankModel() { return { name: '', alias: '', cw: '', levels: [], dflt: '' }; }
-  function blankForm() {
-    return { mode: 'create', id: null, label: '', group: 'gpt', head: '', base_url: '',
-      api_key: '', dirText: '', models: [blankModel()], pulled: null, err: null };
-  }
-  function openForm(mode, id) {
-    if (mode === 'create') {
-      S.form = blankForm();
-    } else {
-      var p = byId(id);
-      if (!p) { flash('bad', '找不到来源 ' + id + '，先点「刷新」。'); return; }
-      var ms = (p.model_settings && typeof p.model_settings === 'object') ? p.model_settings : {};
-      var models = (p.models || []).filter(function (m) { return m && m.alias; }).map(function (m) {
-        var s = ms[m.alias] && typeof ms[m.alias] === 'object' ? ms[m.alias] : {};
-        return { name: m.name || m.alias, alias: m.alias,
-          cw: (typeof m.context_length === 'number' ? String(m.context_length) : ''),
-          levels: Array.isArray(s.levels) ? s.levels.slice() : [], dflt: s['default'] || '' };
-      });
-      S.form = { mode: 'edit', id: id, label: p.label || '', group: p.group || 'gpt',
-        head: p.head || '', base_url: p.base_url || '', api_key: '', dirText: '',
-        models: models.length ? models : [blankModel()], pulled: null,
-        err: isCustom(p) ? null : '内置来源的端点与密钥受保护；渠道头可在行上直接调整。' };
-    }
-    S.confirmDel = null;
-    renderForm();
-    if ($form && $form.scrollIntoView) { try { $form.scrollIntoView({ block: 'nearest' }); } catch (e) {} }
-  }
-
-  function renderForm() {
-    if (_unmounted()) return;
-    clear($form);
-    var f = S.form;
-    if (!f) {
-      $form.appendChild(h('div', { class: 'addsrc' },
-        h('div', { class: 'as-open' },
-          h('button', { class: 'btn pri', type: 'button', onclick: function () { openForm('create'); } }, '＋ 添加来源'),
-          h('span', { class: 'as-line' }),
-          null)));
-      return;
-    }
-    var isCreate = f.mode === 'create';
-    var box = h('div', { class: 'form' });
-    box.appendChild(h('div', { class: 'formh' },
-      h('span', { class: 't', text: isCreate ? '+ 添加来源' : '编辑来源 · ' + f.id }),
-      h('span', { class: 'hr' }),
-      h('span', { class: 'tag', text: isCreate ? 'ID 自动生成' : (isCustom(byId(f.id)) ? '自定义来源' : '内置来源') })));
-
-    if (f.err) box.appendChild(h('div', { class: 'msg warn' }, h('span', { class: 'txt', text: f.err })));
-
-    var groupSel = h('select', null, GROUPS.map(function (g) { return option(g.id, g.name); }));
-    groupSel.value = f.group;
-    groupSel.addEventListener('change', function () { f.group = groupSel.value; });
-
-    var labelIn = h('input', { value: f.label, placeholder: '例如 Hub 大号' });
-    labelIn.addEventListener('input', function () { f.label = labelIn.value; });
-
-    var headIn = h('input', { value: f.head, placeholder: '留空 = 该分组的主来源' });
-    headIn.addEventListener('input', function () { f.head = headIn.value.trim(); });
-
-    var urlIn = h('input', { value: f.base_url, placeholder: 'https://example.com/v1' });
-    urlIn.addEventListener('input', function () { f.base_url = urlIn.value.trim(); });
-
-    var keyIn = h('input', { type: 'password', value: f.api_key,
-      placeholder: isCreate ? 'sk-…' : '留空表示不修改密钥' });
-    keyIn.addEventListener('input', function () { f.api_key = keyIn.value.trim(); });
-
-    var dirIn = h('textarea', { rows: 3, placeholder: '点「拉取」从服务商获取，或按行手填，每行一个模型 ID' });
-    dirIn.value = f.dirText;
-    dirIn.addEventListener('input', function () { f.dirText = dirIn.value; });
-
-    box.appendChild(h('div', { class: 'grid' },
-      h('div', { class: 'f' }, h('label', null, '分组'), groupSel),
-      h('div', { class: 'f' }, h('label', null, '显示名称'), labelIn),
-      h('div', { class: 'f' }, h('label', null, '渠道头'),
-        headIn),
-      h('div', { class: 'f span2' }, h('label', null, '端点'), urlIn),
-      h('div', { class: 'f' }, h('label', null, 'API 密钥'), keyIn),
-      h('div', { class: 'f span3' }, h('label', null, '模型目录'), dirIn,
-        h('div', { class: 'rowbtns' },
-          h('button', { class: 'btn sm', type: 'button', disabled: !!S.busy, onclick: pullModels },
-            S.busy ? spin() : '拉取'),
-          h('button', { class: 'btn sm', type: 'button', onclick: applyDirText }, '按行解析'),
-          h('span', { class: 'sub', text: pullHint() })))));
-
-    f.models.forEach(function (m, i) { box.appendChild(modelRow(m, i)); });
-
-    box.appendChild(h('div', { class: 'formh', style: 'border-top:1px solid var(--line);border-bottom:0' },
-      h('button', { class: 'btn', type: 'button', onclick: function () { f.models.push(blankModel()); renderForm(); } }, '+ 添加模型'),
-      h('span', { class: 'spacer' }),
-      h('button', { class: 'btn', type: 'button', onclick: function () { S.form = null; renderForm(); } }, '取消'),
-      h('button', { class: 'btn pri', type: 'button', disabled: !!S.busy, onclick: submitForm },
-        S.busy ? spin() : (isCreate ? '创建来源' : '保存修改'))));
-
-    $form.appendChild(box);
-  }
-
-  function pullHint() {
-    var f = S.form;
-    if (!f.pulled) return '';
-    if (!f.pulled.ok) return '拉取失败：' + f.pulled.text;
-    return '已拉取 ' + f.pulled.total + ' 个模型';
-  }
-
-  function modelRow(m, i) {
-    var f = S.form;
-    var idIn = h('input', { value: m.alias, placeholder: 'gpt-5.6-sol' });
-    var oldAlias = m.alias;
-    idIn.addEventListener('input', function () {
-      m.alias = idIn.value.trim();
-      if (!m.name || m.name === oldAlias) m.name = m.alias;
-      oldAlias = m.alias;
-    });
-    var nameIn = h('input', { value: m.name, placeholder: '显示名称' });
-    nameIn.addEventListener('input', function () { m.name = nameIn.value; });
-    var cwIn = h('input', { value: m.cw, placeholder: '272000' });
-    cwIn.addEventListener('input', function () { m.cw = cwIn.value.trim(); });
-
-    var chips = h('div', { class: 'lvpick' });
-    var dfltSel = h('select', { title: '默认推理等级（必须是上面勾选的档位之一）' });
-    // 芯片与默认下拉就地同步，不重建表单——否则正在输入的框会失焦丢字
-    function syncLevels() {
-      LEVELS.forEach(function (lv) {
-        var el = chipEls[lv];
-        if (!el) return;
-        var on = m.levels.indexOf(lv) >= 0;
-        el.className = 'lv' + (on ? ' on' : '') + (m.dflt === lv ? ' def' : '');
-        el.title = on ? (lv + '（已选' + (m.dflt === lv ? '，默认' : '') + '）') : (lv + '（点一下选中）');
-      });
-      clear(dfltSel);
-      dfltSel.appendChild(option('', m.levels.length ? '（不指定默认）' : '（先勾选档位）'));
-      m.levels.forEach(function (lv) { dfltSel.appendChild(option(lv, lv)); });
-      dfltSel.value = m.dflt || '';
-      dfltSel.disabled = !m.levels.length;
-    }
-    var chipEls = {};
-    LEVELS.forEach(function (lv) {
-      chips.appendChild(h('button', {
-        type: 'button',
-        class: 'lv',
-        onclick: function () {
-          var at = m.levels.indexOf(lv);
-          if (at >= 0) m.levels.splice(at, 1); else m.levels.push(lv);
-          m.levels = LEVELS.filter(function (x) { return m.levels.indexOf(x) >= 0; });
-          if (m.dflt && m.levels.indexOf(m.dflt) < 0) m.dflt = '';
-          syncLevels();
-        }
-      }, lv));
-      chipEls[lv] = chips.lastChild;
-    });
-    dfltSel.addEventListener('change', function () { m.dflt = dfltSel.value; syncLevels(); });
-    syncLevels();
-
-    return h('div', { class: 'modelrow' },
-      h('div', { class: 'f' }, h('label', null, '模型 ID'), idIn),
-      h('div', { class: 'f' }, h('label', null, '显示名称'), nameIn),
-      h('div', { class: 'f' }, h('label', null, '上下文窗口'), cwIn),
-      h('div', { class: 'f' }, h('label', null, '推理等级 · 默认等级'), chips,
-        h('div', { class: 'dfl' }, h('span', { class: 'sub', text: '默认' }), dfltSel)),
-      h('div', { class: 'f' }, h('button', {
-        class: 'btn', type: 'button', title: '移除该行',
-        onclick: function () { f.models.splice(i, 1); if (!f.models.length) f.models.push(blankModel()); renderForm(); }
-      }, '移除')));
-  }
-
-  // ── 拉模型 / 解析目录 / 提交来源 ─────────────────────────────────────────
-  function pullModels() {
-    var f = S.form;
-    if (!f || S.busy) return;
-    if (!f.base_url) { f.err = '请先填写端点地址。'; renderForm(); return; }
-    f.err = null; f.pulled = null; S.busy = true; renderForm();
-    if (!f.api_key && f.mode === 'edit' && f.id) {
-      S.busy = false;
-      useSnapshot('使用上次快照的模型列表');
-      return;
-    }
-    api('/api/sources/preview', { method: 'POST', timeout: 60000, body: { base_url: f.base_url, api_key: f.api_key || undefined } })
-      .then(function (r) {
-        S.busy = false;
-        var models = normalizeModels(r);
-        if (r && r.ok === false && !models.length) {
-          f.pulled = { ok: false, text: (r.message || '服务商没返回模型') + (r.status ? '（HTTP ' + r.status + '）' : '') };
-          f.err = '拉取失败：' + f.pulled.text; renderForm(); return;
-        }
-        if (!models.length) { f.pulled = { ok: false, text: (r && r.message) || '服务商返回了 0 个模型' }; renderForm(); return; }
-        fillPulled(models, (r && r.message) || '');
-      })
-      .catch(function (e) {
-        if (e && (e.status === 404 || e.status === 405)) {
-          S.busy = false; useSnapshot('使用上次快照的模型列表'); return;
-        }
-        S.busy = false; f.pulled = { ok: false, text: errText(e) }; f.err = '拉取失败：' + errText(e); renderForm();
-      });
-  }
-  function useSnapshot(note) {
-    var f = S.form;
-    if (f.mode !== 'edit' || !f.id) {
-      f.pulled = { ok: false, text: '获取模型列表失败，请手动填写模型 ID' };
-      renderForm(); return Promise.resolve();
-    }
-    return api('/api/state', { timeout: 30000 }).then(function (st) {
-      var ps = (st && st.providers) || [], p = null, i;
-      for (i = 0; i < ps.length; i++) if (ps[i].id === f.id) p = ps[i];
-      if (!p) { f.pulled = { ok: false, text: '已保存的来源里找不到 ' + f.id }; renderForm(); return; }
-      if (p.fetch_error) { f.pulled = { ok: false, text: p.fetch_error }; renderForm(); return; }
-      fillPulled((p.available || []).map(function (m) {
-        return { alias: m.alias, name: m.name, context_length: m.context_length };
-      }), note);
-    }).catch(function (e) { f.pulled = { ok: false, text: errText(e) }; renderForm(); });
-  }
-  function normalizeModels(r) {
-    var raw = (r && (r.models || r.available)) || [];
-    if (!Array.isArray(raw)) return [];
-    return raw.map(function (m) {
-      if (typeof m === 'string') return { alias: m, name: m, context_length: null };
-      return { alias: m.alias || m.id || m.name, name: m.name || m.alias || m.id,
-        context_length: m.context_length || m.context_window || null };
-    }).filter(function (m) { return m.alias; });
-  }
-  function tidyModels() {
-    var f = S.form;
-    var real = f.models.filter(function (m) { return !!m.alias; });
-    f.models = real.length ? real : [blankModel()];
-  }
-  function fillPulled(list, note) {
-    var f = S.form;
-    var usable = list.filter(function (m) { return codexUsable(m.alias); });
-    var have = {};
-    var kept = f.models.filter(function (m) { return m.alias; });
-    kept.forEach(function (m) { have[m.alias] = 1; });
-    var src = byId(f.id);
-    var ms = (src && src.model_settings && typeof src.model_settings === 'object') ? src.model_settings : {};
-    usable.forEach(function (m) {
-      if (have[m.alias]) return;
-      have[m.alias] = 1;
-      var s = ms[m.alias] && typeof ms[m.alias] === 'object' ? ms[m.alias] : {};
-      f.models.push({ alias: m.alias, name: m.name || m.alias,
-        cw: m.context_length ? String(m.context_length) : '',
-        levels: Array.isArray(s.levels) ? s.levels.slice() : [], dflt: s['default'] || '' });
-    });
-    if (!f.models.length) f.models.push(blankModel());
-    tidyModels();
-    f.pulled = { ok: true, total: usable.length, note: note };
-    renderForm();
-  }
-  function applyDirText() {
-    var f = S.form;
-    if (!f) return;
-    var lines = String(f.dirText || '').split(/[\r\n]+/).map(function (s) { return s.trim(); }).filter(Boolean);
-    if (!lines.length) { f.err = '模型目录为空，请粘贴模型 ID 或点「拉取」。'; renderForm(); return; }
-    var have = {};
-    f.models.forEach(function (m) { if (m.alias) have[m.alias] = 1; });
-    var added = 0;
-    lines.forEach(function (id) {
-      if (have[id]) return;
-      have[id] = 1; added++;
-      f.models.push({ alias: id, name: id, cw: '', levels: [], dflt: '' });
-    });
-    f.models = f.models.filter(function (m) { return !!m.alias; });
-    if (!f.models.length) f.models.push(blankModel());
-    tidyModels();
-    f.err = added ? (added + ' 个模型已添加') : '模型已存在';
-    f.dirText = '';
-    renderForm();
-  }
-  function buildSpec() {
-    var f = S.form;
-    var spec = { label: (f.label || '').trim(), group: f.group, head: (f.head || '').trim(),
-      base_url: (f.base_url || '').trim(), models: [] };
-    if (!spec.label) return { err: '显示名称不能为空。' };
-    if (!spec.head && spec.head !== '') { /* 空串合法 = 无头 */ }
-    if (spec.head && !HEAD_RE.test(spec.head)) {
-      return { err: '渠道头不合法：只能用 24 个字符以内的小写字母、数字、点、下划线、连字符。' };
-    }
-    if (!spec.base_url) return { err: '端点不能为空。' };
-    if (f.mode === 'create' && !f.api_key) return { err: '新增来源必须填 API 密钥。' };
-    if (f.api_key) spec.api_key = f.api_key;
-    var seen = {}, ms = {}, cws = [], bad = null;
-    f.models.forEach(function (m) {
-      var alias = (m.alias || '').trim();
-      if (!alias) return;
-      if (seen[alias]) { bad = bad || ('模型 ID 重复：' + alias); return; }
-      seen[alias] = 1;
-      spec.models.push({ name: (m.name || alias).trim() || alias, alias: alias });
-      if (m.levels && m.levels.length) {
-        var d = m.levels.indexOf(m.dflt) >= 0 ? m.dflt : m.levels[0];
-        ms[alias] = { levels: m.levels.slice(), 'default': d };
-      }
-      if (m.cw !== '' && m.cw !== null && m.cw !== undefined) {
-        var n = Number(m.cw);
-        if (!isFinite(n) || n <= 0) { bad = bad || ('上下文窗口不是正整数：' + m.cw); return; }
-        if (cws.indexOf(n) < 0) cws.push(n);
-      }
-    });
-    if (bad) return { err: bad };
-    if (!spec.models.length) return { err: '至少填一个模型 ID。' };
-    if (Object.keys(ms).length) spec.model_settings = ms;
-    spec.context_window = cws.length ? cws[0] : null;
-    if (cws.length > 1) {
-      return { spec: spec, warn: '上下文窗口是来源级设置，多行填了不同的值（' + cws.join(' / ') + '），已采用 ' + cws[0] + '。' };
-    }
-    return { spec: spec };
-  }
-  function submitForm() {
-    var f = S.form;
-    if (!f || S.busy) return;
-    f.err = null;
-    var built = buildSpec();
-    if (built.err) { f.err = built.err; renderForm(); return; }
-    var isCreate = f.mode === 'create';
-    S.busy = true; renderForm(); renderActions();
-    var req = isCreate
-      ? api('/api/sources', { method: 'POST', body: built.spec })
-      : api('/api/sources/' + enc(f.id), { method: 'PUT', body: built.spec });
-    req.then(function (r) {
-      var id = (r && r.id) || f.id;
-      S.busy = false; S.form = null;
-      S.msg = built.warn ? { kind: 'warn', text: built.warn } : null;
-      return reload();
-    }).catch(function (e) {
-      S.busy = false;
-      if (S.form) S.form.err = (isCreate ? '创建失败：' : '保存失败：') + errText(e);
-      S.msg = { kind: 'bad', text: (isCreate ? '创建失败：' : '保存失败：') + errText(e) };
-      renderAll();
-    });
-  }
-  function removeSource(id) {
-    var wasOn = isOn(id);
-    S.confirmDel = null; S.busy = true;
-    renderTree(); renderActions();
-    api('/api/sources/' + enc(id), { method: 'DELETE' }).then(function () {
-      S.busy = false;
-      S.msg = null;
-      return reload();
-    }).catch(function (e) {
-      S.busy = false;
-      S.msg = { kind: 'bad', text: '删除失败：' + errText(e) };
-      renderAll();
-    });
-  }
 
   var busUnbind = null;
+  // 底部只添加来源。编辑、删除、改渠道头在管理页。没有分组时不渲染表单。
+  var sourceForm = null;
+  function ensureSourceForm() {
+    if (sourceForm || !window.PrismSourceForm) return sourceForm;
+    sourceForm = window.PrismSourceForm.create({
+      h: h,
+      api: api,
+      errText: errText,
+      codexUsable: codexUsable,
+      groups: currentGroups,
+      byId: byId,
+      isCustom: isCustom,
+      allowCreate: true,
+      onBusy: function (v) { S.busy = !!v; if (typeof renderActions === 'function') renderActions(); },
+      onSaved: function (warn) {
+        S.msg = warn ? { kind: 'warn', text: warn } : null;
+        return reload();
+      },
+      onError: function (text) {
+        S.msg = { kind: 'bad', text: text };
+        renderAll();
+      }
+    });
+    return sourceForm;
+  }
+  function renderForm() {
+    if (_unmounted()) return;
+    if (!currentGroups().length) {
+      if (sourceForm) sourceForm.close();
+      else if ($form) clear($form);
+      return;
+    }
+    var f = ensureSourceForm();
+    if (f) f.renderInto($form);
+  }
+
   function highlightSource(sourceId) {
     if (!sourceId) return;
     var p = byId(sourceId);
@@ -1756,10 +1541,15 @@
 
   function doHighlight(p) {
     var gid = p.group;
-    for (var k in S.open) {
-      if (k.indexOf('g:') === 0 && k.indexOf('/' + gid) > 0) S.open[k] = true;
+    var aid = getActiveAgentId();
+    var k;
+    // 树默认收起时来源行还没挂上。先打开当前代理端和它所在的分组，跳转才看得到。
+    for (k in S.open) {
+      if (k.indexOf('a:') === 0) S.open[k] = false;
     }
-    S.open['s:' + p.id] = true;
+    if (aid) S.open['a:' + aid] = true;
+    if (aid && gid) S.open['g:' + aid + '/' + gid] = true;
+    if (p.id) S.open['s:' + p.id] = true;
     saveOpen();
     renderTree();
 
@@ -1831,7 +1621,7 @@
     if (busUnbind) { busUnbind(); busUnbind = null; }
     if (S.wrap && S.wrap.parentNode) S.wrap.parentNode.removeChild(S.wrap);
     S.wrap = null;
-    $tree = $treeHint = $addsrc = $form = $acts = $msgBox = $stickyBar =
+    $tree = $treeHint = $addsrc = $form = $acts = $stickyBar =
       $globalToolbar = $globalFilterInp = $filterBadge = $clearFilterBtn = $unreadableBox = null;
     S.state = null; S.sources = null; S.agents = null;
     S.draft = {}; S.origin = {}; S.sel = {}; S.selOrigin = {};
@@ -1840,6 +1630,7 @@
     S.globalFilter = '';
     S.showTechDetails = false;
     S.ctx = null;
+    sourceForm = null;
     return Promise.resolve();
   }
 

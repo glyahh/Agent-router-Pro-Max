@@ -449,9 +449,12 @@ codex-api-key: []
 openai-compatibility: []
 """
 
+# 新人空白：没有来源、没有分组。已有文件绝不覆盖。
+_EMPTY_PLAN = {'providers': [], 'groups': [], 'selected': {}}
+
 
 def ensure_first_run_files() -> list[str]:
-    """首启引导（HI-03）：缺 .local-secrets.json / config.yaml 时生成最小可用集。
+    """首启引导（HI-03）：缺 .local-secrets.json / config.yaml / routing-plan.json 时生成最小可用集。
 
     只生成缺失的文件，**绝不覆盖已存在文件**——那里面是用户的凭据。两把密钥一次
     生成、两处落盘：management_key 同时进 .local-secrets.json（Prism 读它发 Bearer）
@@ -467,7 +470,8 @@ def ensure_first_run_files() -> list[str]:
     created: list[str] = []
     secrets_path = ROOT / '.local-secrets.json'
     config_path = ROOT / 'config.yaml'
-    # 两个文件各自独立判断（不是 if/elif 链——全新首启两件都要生成）
+    plan_path = ROOT / 'routing-plan.json'
+    # 各文件独立判断（不是 if/elif 链——全新首启缺哪个补哪个）
     if not secrets_path.exists():
         if config_path.exists():
             # 半初始化 A：config 在而 secrets 缺。网关侧的 management key 已经是
@@ -498,6 +502,10 @@ def ensure_first_run_files() -> list[str]:
             # 半初始化 B：secrets 在但里面没有可用的 management_key
             log.warning('半初始化：%s 缺，而 %s 里读不到 management_key——请人工处理，不自动生成。',
                         config_path.name, secrets_path.name)
+    # 路由计划与密钥无关：缺了就写空名单。已有的（包括没有 groups 键的旧文件）一个字节不动。
+    if not plan_path.exists():
+        if _atomic_write_json(plan_path, _EMPTY_PLAN):
+            created.append(plan_path.name)
     try:
         (ROOT / 'auth').mkdir(exist_ok=True)   # 网关的 auth-dir 指这里，缺失会让首次登录没地方落
     except OSError:
@@ -910,7 +918,7 @@ def enabled_groups() -> dict:
     plan = rs.read_json(rs.ROOT / 'routing-plan.json')
     config = gateway_get('config')
     enabled = _sources()._enabled_ids(config, plan)
-    out = {group: [] for group in rs.GROUPS}
+    out = {group: [] for group in rs.group_ids(plan)}
     for row in plan.get('providers') or []:
         if not isinstance(row, dict):
             continue
@@ -987,7 +995,7 @@ def _assert_selection_heads(payload: dict) -> None:
         providers = merged
     # 判据本身的任何异常都不许吞：这是一道写盘前的闸门，静默跳过就等于没有闸门。
     # （曾经 _assert_heads_ok 也被包在同一个 except 里 → 不变量可以静默失效继续写盘。）
-    src._assert_heads_ok(providers, enabled)
+    src._assert_heads_ok(providers, enabled, src._heads_arg(plan))
 
 
 def _apply_selection_locked(payload: dict) -> dict:

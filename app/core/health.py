@@ -417,11 +417,6 @@ def quota_state(auth_files=_FETCH) -> dict:
 
 # ---------------------------------------------------------------- 路由与来源
 
-def _active(config: dict, provider: dict) -> bool:
-    """这一行现在是不是被选中的那一个。判定逻辑一律转调 route_selector，不自己重写。"""
-    entry = rs.find_entry(config, provider)
-    return rs.active(entry, provider["section"])
-
 
 def _plan_rows(plan) -> list:
     """routing-plan.json 里的 provider 行，**只保留对象行**。
@@ -445,29 +440,21 @@ def _plan_rows(plan) -> list:
 def _routing(plan: dict, config: dict | None) -> dict:
     selected: dict = {}
     grouped: dict = {}
-    for group in rs.GROUPS:
+    # 行级生效判定转调 rs.row_states —— 那是"行级是否生效"的唯一实现（同时吃 plan 顶层的
+    # 行级选择），与 rs.snapshot() 的口径**同源**：两处不一致时监控页和首页会说两套话。
+    # 行级失败（凭据缺失/重复、auth 文件读不出来）在里面被收进 failures 降级 —— 不算
+    # "选中"，也不让一行坏数据把 /api/monitor 打成 500（auth 文件的两种坏法：
+    # FileNotFoundError 与"合法 JSON 但不是对象"导致的 AttributeError，都在那里兜住）。
+    states, _failures = ({}, {})
+    if config is not None:
+        states, _failures = rs.row_states(config, _plan_rows(plan), rs.selection_of(plan))
+    for group in rs.group_ids(plan):
         if config is None:
             selected[group] = []
             continue
-        live = []
-        for provider in _plan_rows(plan):
-            if provider.get("group") != group:
-                continue
-            try:
-                if _active(config, provider):
-                    live.append(provider["id"])
-            except (rs.RouteError, KeyError, OSError, ValueError, AttributeError):
-                # 配置里找不到这一行的凭据（或凭据文件根本不在）：不算"选中"，也不让
-                # 整页失败。OSError 是重点——auth\codex-official.json 缺席时
-                # rs.auth_active() 读文件抛的就是 FileNotFoundError，只收 RouteError
-                # 会让 /api/monitor 整页 500。read_json 解不动是 ValueError。
-                # AttributeError 是同一个文件的另一种坏法：重新登录时写到一半，文件
-                # 是合法 JSON 但不是对象（null / 数组 / 裸字符串），auth_active() 的
-                # `.get` 就炸。这个 try 里只有 _active 一个调用，收窄不到别的东西。
-                continue
-        # 列表，不是标量：一个分组可以同时启用多家来源。旧版的 "conflict" 哨兵随之下线，
-        # 与 rs.snapshot() 的口径保持一致（两处不一致时监控页和首页会说两套话）。
-        selected[group] = live
+        # 列表，不是标量：一个分组可以同时启用多家来源。旧版的 "conflict" 哨兵随之下线。
+        selected[group] = [p["id"] for p in _plan_rows(plan)
+                           if p.get("group") == group and states.get(p.get("id")) is True]
     for provider in _plan_rows(plan):
         # 缺 id 的行要**跳过**，不能直取：_plan_rows 只保证"是对象"，一行 `{}` 就会让
         # `provider["id"]` KeyError → /api/monitor 整页 500。同一份盘上数据
@@ -495,6 +482,7 @@ def _routing(plan: dict, config: dict | None) -> dict:
                     exposed.append(cid)
     return {
         "selected": selected,
+        "groups": rs.groups_of(plan),
         "exposed_models": sorted(exposed),
         "candidates": grouped,
         "note": None if config is not None else "网关不可达，无法判定当前路由",
@@ -546,6 +534,11 @@ def _sources(plan: dict, config: dict | None, auth_files: dict | None, usage: di
                 if isinstance(stat, dict):
                     usage_by_key[source_key] = stat
 
+    # 行级生效判定与 rs.snapshot() 同源（rs.row_states 是唯一实现，同时吃 plan 顶层的
+    # 行级选择）。失败的行降级成"不知道"，不是 False。
+    states, failures = ({}, {})
+    if config is not None:
+        states, failures = rs.row_states(config, _plan_rows(plan), rs.selection_of(plan))
     rows = []
     for provider in _plan_rows(plan):
         oauth = provider.get("section") == "auth-file"
@@ -563,12 +556,15 @@ def _sources(plan: dict, config: dict | None, auth_files: dict | None, usage: di
             "unavailable": True,
         }
         if config is not None:
-            try:
-                row["enabled"] = _active(config, provider)
-            except (rs.RouteError, KeyError, OSError, ValueError, AttributeError) as exc:
+            pid = provider.get("id")
+            if pid in states:
+                row["enabled"] = states[pid]
+            else:
+                exc = failures.get(pid)
                 # 行级失败降级成"不知道"（enabled 保持 null），不是 False。读不到凭据
                 # 文件和"这一行被停用了"是两回事，别把不知道画成一个确定的否定。
-                row["error"] = _route_error_note(exc)
+                if exc is not None:
+                    row["error"] = _route_error_note(exc)
         if oauth:
             # oauth 行一定有 quota_hint 这个键（未知就是 null），前端可以无条件读。
             row["quota_hint"] = None

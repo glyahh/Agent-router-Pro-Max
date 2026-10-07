@@ -13,7 +13,8 @@ core 再转调 route_selector —— 不在这里重写第二份。
 各有一套中文文案，行为一致才不会让用户看错原因。
 
 进程生命周期由调用方掌握：main.py 用 start_background(port) 起线程，
-`python server.py --port 8395` 则自己阻塞跑。本文件从不终止任何进程。
+`python server.py --port 8395` 则自己阻塞跑。退出本进程不关网关。
+停止网关只转调 core.gateway.stop_gateway，而且只停身份为 ok 的进程。
 """
 
 from __future__ import annotations
@@ -39,7 +40,7 @@ APP_DIR = Path(__file__).resolve().parent
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
-from core import agents, bridge, health, sampling, sources  # noqa: E402
+from core import agents, bridge, gateway, health, sampling, sources  # noqa: E402
 
 ROOT = bridge.ROOT
 RouteError = bridge.RouteError
@@ -761,17 +762,23 @@ def list_error_logs() -> dict:
     return {'files': files, 'dir': str(LOGS_DIR)}
 
 
-def read_error_log(name: str):
-    """返回 (原始字节, 是否被截断)。名字必须先在 logs 目录里落地过一次。"""
+def _resolve_log_file(name: str):
+    """日志名只能落在 logs 目录里的普通文件上。返回 (目录内路径, 解析后的真实路径)。"""
     if not re.match(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$', name or ''):
         raise HttpError(400, '日志文件名不合法：只允许字母数字与 . _ -')
-    path = (LOGS_DIR / name)
+    path = LOGS_DIR / name
     try:
         resolved = path.resolve(strict=True)
     except (OSError, RuntimeError):
         raise HttpError(404, '日志文件不存在：' + name) from None
     if resolved.parent != LOGS_DIR.resolve() or not resolved.is_file():
         raise HttpError(404, '日志文件不存在：' + name)
+    return path, resolved
+
+
+def read_error_log(name: str):
+    """返回 (原始字节, 是否被截断)。名字必须先在 logs 目录里落地过一次。"""
+    _path, resolved = _resolve_log_file(name)
     truncated = False
     with resolved.open('rb') as handle:
         raw = handle.read(ERROR_LOG_LIMIT + 1)
@@ -779,6 +786,40 @@ def read_error_log(name: str):
         raw = raw[:ERROR_LOG_LIMIT]
         truncated = True
     return raw, truncated
+
+
+def delete_error_log(name: str) -> dict:
+    """删一份错误日志。只接受 error-*.log，main.log 和目录外的路径一律拒绝。"""
+    if not re.match(r'^error-[A-Za-z0-9][A-Za-z0-9._-]{0,115}\.log$', name or ''):
+        raise HttpError(400, '只能删除错误日志')
+    path, _resolved = _resolve_log_file(name)
+    try:
+        path.unlink()
+    except OSError as exc:
+        raise HttpError(409, '删不掉 %s：%s' % (name, exc.strerror or type(exc).__name__)) from None
+    return {'deleted': name}
+
+
+def delete_error_logs() -> dict:
+    """删掉 logs 目录里全部 error-*.log。main.log 不在这个名单里。"""
+    deleted = []
+    failed = []
+    if LOGS_DIR.is_dir():
+        root = LOGS_DIR.resolve()
+        for path in LOGS_DIR.glob('error-*.log'):
+            try:
+                resolved = path.resolve(strict=True)
+            except OSError:
+                continue
+            if resolved.parent != root or not resolved.is_file():
+                continue
+            try:
+                path.unlink()
+            except OSError:
+                failed.append(path.name)
+                continue
+            deleted.append(path.name)
+    return {'deleted': deleted, 'failed': failed}
 
 
 # --------------------------------------------------------------------------- 来源预览
@@ -1048,7 +1089,8 @@ class Handler(BaseHTTPRequestHandler):
             # 用 `not body` 会把这类请求打成 400"请求体是空的"——用户点一下按钮就报错，
             # 而错的原因跟界面上什么都没填没关系。"有没有带 body"是 None 与否的问题。
             if method == 'POST' and body is None and path in ('/api/select', '/api/connect',
-                                                              '/api/sources', '/api/settings'):
+                                                              '/api/sources', '/api/settings',
+                                                              '/api/gateway', '/api/groups'):
                 raise HttpError(400, '请求体是空的')
             if method == 'PUT' and body is None:
                 raise HttpError(400, '请求体是空的')
@@ -1092,9 +1134,12 @@ class Handler(BaseHTTPRequestHandler):
             if path == '/api/settings':
                 return self._ok(settings_payload())
             if path == '/api/agents':
-                # 5 个客户端的注册信息 + 实测状态（配置文件在不在、base_url 指向哪、
-                # 有没有指向本网关）。**纯只读**，不写任何客户端配置。
+                # 各客户端的注册信息 + 实测状态（配置文件在不在、地址指向哪）。
+                # **纯只读**，不写任何客户端配置。
                 return self._ok(agents.list_agents())
+            if path == '/api/gateway':
+                # 本目录网关的身份、说明、端口是否在听。只读，不启停。
+                return self._ok(gateway.status())
             hit = re.match(r'^/api/error-logs/(.+)$', path)
             if hit:
                 raw, truncated = read_error_log(hit.group(1))
@@ -1108,14 +1153,22 @@ class Handler(BaseHTTPRequestHandler):
             if path == '/api/connect':
                 # body 里的 agent 决定改哪个客户端，缺省 codex（老前端不带这个字段）。
                 # codex 仍然走 rs.connect_client，行为一字未改。
+                # disconnect:true 时只撤回仍是我们写过的字段，同样要 confirm:true。
                 return self._ok(agents.connect_agent(
                     str((body or {}).get('agent') or 'codex'), body or {}))
+            if path == '/api/gateway':
+                # {on: true} 拉起（已在听就不动）；{on: false} 只停身份为 ok 的进程。
+                if not isinstance(body, dict) or not isinstance(body.get('on'), bool):
+                    raise HttpError(400, 'on 必须是 true 或 false')
+                return self._ok(gateway.set_on(body['on']))
             if path == '/api/connect/preview':
                 # 只算"会改哪几行"，不落盘。界面必须先展示它，用户确认后才发 /api/connect。
                 return self._ok(agents.preview_agent(
                     str((body or {}).get('agent') or 'codex')))
             if path == '/api/recheck':
                 return self._ok(bridge.recheck_blocked())
+            if path == '/api/groups':
+                return self._ok(sources.create_group(body or {}))
             if path == '/api/sources':
                 created = sources.create_source(body or {})
                 return self._ok(source_write_result(created))
@@ -1129,13 +1182,17 @@ class Handler(BaseHTTPRequestHandler):
             raise HttpError(404, '没有这个接口：POST ' + path)
 
         if method == 'PUT':
+            hit = re.match(r'^/api/groups/([^/]+)$', path)
+            if hit:
+                return self._ok(sources.rename_group(hit.group(1), body or {}))
             # 渠道头单独一条：它是纯 plan 字段，内置来源也要能改（update_source 只让改
             # custom 的行）。必须排在下面那条通配之前——虽然 [^/]+$ 本来就匹配不到
             # 带 /head 的路径，但顺序写清楚，以后加子资源不会踩。
             hit = re.match(r'^/api/sources/([^/]+)/head$', path)
             if hit:
                 return self._ok(sources.set_head(hit.group(1),
-                                                 (body or {}).get('head')))
+                                                 (body or {}).get('head'),
+                                                 (body or {}).get('agent')))
             hit = re.match(r'^/api/sources/([^/]+)$', path)
             if hit:
                 updated = sources.update_source(hit.group(1), body or {})
@@ -1145,6 +1202,14 @@ class Handler(BaseHTTPRequestHandler):
         if method == 'DELETE':
             if path == '/api/logs':
                 return self._ok(clear_logs())
+            if path == '/api/error-logs':
+                return self._ok(delete_error_logs())
+            hit = re.match(r'^/api/error-logs/(.+)$', path)
+            if hit:
+                return self._ok(delete_error_log(hit.group(1)))
+            hit = re.match(r'^/api/groups/([^/]+)$', path)
+            if hit:
+                return self._ok(sources.delete_group(hit.group(1)))
             hit = re.match(r'^/api/sources/([^/]+)$', path)
             if hit:
                 sources.delete_source(hit.group(1))

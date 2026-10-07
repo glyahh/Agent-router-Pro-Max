@@ -3,12 +3,13 @@ r"""Prism 桌面壳：单实例 + 拉起后端 + WebView2 窗口 + 托盘 + 开�
 契约在 app/INTERFACES.md 的 `main.py` 一节。这里只做"进程与窗口"，一条业务逻辑
 都不碰——控制台服务在 server.py，业务在 core/*，源头在 script/route_selector.py。
 
-**本文件绝不终止任何进程。** 网关不是 Prism 的私产：用户可能正是用
-script/Start-Proxy.ps1 起的它，也可能挂着别的客户端在用。所以：
+退出 Prism 仍然不关网关。网关不是 Prism 的私产：用户可能正是用
+script/Start-Proxy.ps1 起的它，也可能挂着别的客户端在用。控制页可以停掉
+身份为 ok 的网关进程，但退出路径不调用停止。本文件自己不结束任何进程：
 
   * 网关端口已在监听 → 一个字节都不动它；
-  * 网关端口没监听 → 由 Prism 拉起来（隐藏窗口），但退出时**不关它**；
-  * 托盘上的"重启网关"= 再探一次，没在跑才拉，不会先杀后起。
+  * 网关端口没监听 → 由 Prism 拉起来（隐藏窗口），退出时不关它；
+  * 托盘上的「重启网关」= 再探一次，没在跑才拉，不会先杀后起。
 
 （网关端口默认 127.0.0.1:8317，被 PRISM_GATEWAY_BASE 指到别处时只探不拉——端口、
 网关程序与配置路径三样都取自 core\identity.py 的模块常量。）
@@ -32,8 +33,6 @@ import atexit
 import logging
 import os
 import secrets
-import socket
-import subprocess
 import sys
 import threading
 import time
@@ -81,6 +80,7 @@ if str(APP_DIR) not in sys.path:
 
 from core import bridge                     # noqa: E402  （顺带把 sys.path 理顺）
 from core import identity                   # noqa: E402  （网关身份核对，实现见 core\identity.py）
+from core import gateway as gateway_proc    # noqa: E402  （启停在这里，避免 server import main）
 import server                               # noqa: E402
 
 ROOT = bridge.ROOT                          # D:\MY_DESIGN\Agent-router-Pro-Max
@@ -855,11 +855,7 @@ atexit.register(_release_single_instance)
 
 def gateway_listening(timeout: float = 0.5) -> bool:
     """探网关端口。网关没有 /health（404），只能用 socket。"""
-    try:
-        with socket.create_connection((GATEWAY_HOST, GATEWAY_PORT), timeout=timeout):
-            return True
-    except OSError:
-        return False
+    return gateway_proc.port_open(GATEWAY_HOST, GATEWAY_PORT, timeout)
 
 
 # ----------------------------------------------------------------------- 网关身份
@@ -880,51 +876,12 @@ def gateway_is_prisms_to_launch() -> bool:
 
 
 def ensure_gateway(wait: bool = True) -> str:
-    """确保网关端口在监听。返回 'running' / 'started' / 'starting' / 'foreign:说明' / 'failed:原因'。
+    """确保网关端口在监听。拉起逻辑只在 core.gateway 里有一份。
 
-    **不在监听才拉**：已经在跑就一个字节都不动（README 里承诺"你自己的网关不会被顶掉"）。
-
-    但"在跑"不等于"是本目录这套"。端口是公共资源，8317 上完全可能坐着另一个部署的
-    网关（实测就是这样）。那种情况下返回 'foreign:...' 而不是 'running'，让托盘和
-    启动日志如实说出来——监控页/日志页拿着别人的数据当真，比"网关未运行"更糟。
+    退出 Prism 不调用停止。控制页要关网关时走 gateway_proc.stop_gateway，
+    而且只停身份为 ok 的进程。
     """
-    if gateway_listening(timeout=0.15):
-        who = identity.gateway_identity()
-        log('网关身份：' + who['note'])
-        if who['state'] == IDENTITY_FOREIGN:
-            return 'foreign:' + who['note']
-        return 'running'
-    if not gateway_is_prisms_to_launch():
-        return ('failed:PRISM_GATEWAY_BASE 指着 %s:%d，Prism 不代管这个地址'
-                '（只有 config.yaml 里的 %s:%d 才由 Prism 拉）'
-                % (GATEWAY_HOST, GATEWAY_PORT, DEFAULT_GATEWAY_HOST, DEFAULT_GATEWAY_PORT))
-    if not GATEWAY_EXE.is_file():
-        return 'failed:找不到网关程序 ' + str(GATEWAY_EXE)
-    if not GATEWAY_CONFIG.is_file():
-        return 'failed:找不到网关配置 ' + str(GATEWAY_CONFIG)
-    try:
-        subprocess.Popen(
-            [str(GATEWAY_EXE), '-config', str(GATEWAY_CONFIG)],
-            cwd=str(ROOT),
-            # 隐藏窗口：桌面应用弹一个黑框很难看，而且用户会手动去关它
-            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            close_fds=True,
-        )
-    except OSError as exc:
-        return 'failed:拉起网关失败 ' + str(exc)
-    if not wait:
-        return 'starting'
-    # 网关是 Go 程序，冷启动通常 1~3 秒；给 20 秒余量，期间界面照样能开
-    deadline = time.time() + 20
-    while time.time() < deadline:
-        if gateway_listening(timeout=0.2):
-            return 'started'
-        time.sleep(0.15)
-    return 'failed:网关已拉起但 %d 秒内没有监听 %d 端口，去看 %s' % (
-        20, GATEWAY_PORT, ROOT / 'logs' / 'main.log')
+    return gateway_proc.ensure_gateway(wait=wait)
 
 
 # --------------------------------------------------------------------------- 托盘图标

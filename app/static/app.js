@@ -1,7 +1,7 @@
 /* Prism · 前端壳
  *
- * 这个文件负责：hash 路由、按需加载五页、公共渲染组件、fetch 封装、状态灯轮询。
- * 它不含任何业务逻辑——五页的实现各自在 pages/ 下。
+ * 这个文件负责：hash 路由、按需加载六页、公共渲染组件、fetch 封装、状态灯轮询。
+ * 它不含任何业务逻辑——六页的实现各自在 pages/ 下。
  *
  * ─── 页面模块的契约（写 pages/*.js 的人照这个来）────────────────────
  *
@@ -1007,12 +1007,16 @@
   var PAGES = [
     { name: 'home', label: '首页', hash: '#/home', file: 'pages/home.js',
       desc: '来源与模型拓扑配置' },
+    { name: 'manage', label: '管理', hash: '#/manage', file: 'pages/manage.js',
+      desc: '分组与来源' },
     { name: 'usage', label: '用量', hash: '#/usage', file: 'pages/usage.js',
-      desc: '配额窗口与用量历史' },
+      desc: '请求与用量历史' },
     { name: 'monitor', label: '监控', hash: '#/monitor', file: 'pages/monitor.js',
       desc: '网关健康与路由状态' },
     { name: 'logs', label: '日志', hash: '#/logs', file: 'pages/logs.js',
       desc: '网关实时运行日志' },
+    { name: 'control', label: '控制', hash: '#/control', file: 'pages/control.js',
+      desc: '网关与代理端' },
     { name: 'settings', label: '设置', hash: '#/settings', file: 'pages/settings.js',
       desc: '网关与应用参数设置' }
   ];
@@ -1164,7 +1168,29 @@
 
   /* 用 <script> 注入而不是 import()：file:// 下动态 import 会被 CORS 拦掉，
      而 <script src> 在 file:// 下能正常执行。 */
+  var libLoading = {};
+  function ensureLib(src, ready) {
+    if (ready()) return Promise.resolve();
+    if (libLoading[src]) return libLoading[src];
+    libLoading[src] = new Promise(function (resolve, reject) {
+      var s = document.createElement('script');
+      s.src = src;
+      s.async = false;
+      s.onload = function () { resolve(); };
+      s.onerror = function () {
+        delete libLoading[src];
+        reject(new Error(src + ' 加载失败'));
+      };
+      document.head.appendChild(s);
+    });
+    return libLoading[src];
+  }
+
   function loadPage(name) {
+    if ((name === 'home' || name === 'manage') && !(window.PrismSourceForm)) {
+      return ensureLib('pages/source-form.js', function () { return !!window.PrismSourceForm; })
+        .then(function () { return loadPage(name); });
+    }
     if (registry[name]) return Promise.resolve(registry[name]);
     if (window.PrismPages && window.PrismPages[name]) {
       var pre = window.PrismPages[name];
@@ -1239,7 +1265,7 @@
     activeHash = location.hash || ('#/' + name);
     var token = ++mountToken;
 
-    // 导航项用 data-nav 而不是 data-page：五页里有人的兜底挂载会 querySelector
+    // 导航项用 data-nav 而不是 data-page：页面里有人的兜底挂载会 querySelector
     // ('[data-page="settings"]') 找容器，用 data-page 会让页面渲染进导航栏里
     Array.prototype.forEach.call(document.querySelectorAll('#tabs a'), function (a) {
       a.classList.toggle('on', a.dataset.nav === name);
@@ -1777,7 +1803,7 @@
     }
 
     document.addEventListener('keydown', function (e) {
-      // 0. 弹窗打开时拦截页面导航键（Ctrl+1..5 / Ctrl+, / Ctrl+K / F5），只放行
+      // 0. 弹窗打开时拦截页面导航键（Ctrl+1..6 / Ctrl+, / Ctrl+K / F5），只放行
       //    Tab 与 Esc 交给弹窗自身的焦点循环与关闭逻辑
       if (dlgOpen && e.key !== 'Tab' && e.key !== 'Escape' &&
           ((e.ctrlKey || e.metaKey || e.altKey) || e.key === 'F5' || e.keyCode === 116)) {
@@ -1799,14 +1825,15 @@
         return;
       }
 
-      // 3. Ctrl+1..5 / Cmd+1..5 快速切换 5 个主页面
-      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && /^[1-5]$/.test(e.key)) {
+      // 3. Ctrl+1..6 / Cmd+1..6 快速切换 6 个主页面
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && /^[1-6]$/.test(e.key)) {
         var pageMap = {
           '1': '#/home',
           '2': '#/usage',
           '3': '#/monitor',
           '4': '#/logs',
-          '5': '#/settings'
+          '5': '#/control',
+          '6': '#/settings'
         };
         var targetHash = pageMap[e.key];
         if (targetHash) {

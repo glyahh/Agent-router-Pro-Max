@@ -81,6 +81,45 @@ WIDE_TABLE = """
 </div>
 """
 
+# 用量页总览指标卡：与 usage.js 的 renderOverview 同构（含图表区与悬停热区）
+METRIC_CARD = """
+<div class="usage-page">
+  <div class="sec u-lead">
+    <div class="umetric" data-trend="up">
+      <div class="umetric-chart">
+        <div class="umetric-dots"></div>
+        <svg viewBox="0 0 300 120" preserveAspectRatio="none" aria-hidden>
+          <path d="M10,100 C60,100 60,40 110,40 C160,40 160,70 210,70 C260,70 260,20 290,20"
+                fill="none" stroke="currentColor" stroke-width="1.5" vector-effect="non-scaling-stroke"/>
+        </svg>
+        <div class="umetric-hit">
+          <i style="left:0%;width:20%"></i><i style="left:20%;width:20%"></i>
+          <i style="left:40%;width:20%"></i><i style="left:60%;width:20%"></i>
+          <i style="left:80%;width:20%"></i>
+        </div>
+      </div>
+      <div class="umetric-body">
+        <div class="umetric-head">
+          <h3 class="umetric-title">请求总览</h3>
+          <span class="u-seg umetric-view" data-role="metricview">
+            <button type="button" data-v="curve" class="on">曲线</button>
+            <button type="button" data-v="bar">柱状</button>
+          </span>
+        </div>
+        <div class="umetric-value">1.2k</div>
+      </div>
+      <div class="umetric-foot">
+        <span class="umetric-trend">
+          <svg class="ui-icon" viewBox="0 0 16 16" aria-hidden><path d="M8 13V4M8 4 4.5 7.5M8 4l3.5 3.5"/></svg>
+          12.3% 较首日</span>
+        <span class="umetric-delta">+45 较前一日</span>
+        <span class="umetric-stats">峰值 <b>210</b><span class="dot-sep">·</span>谷值 <b>90</b><span class="dot-sep">·</span>均值 <b>150</b></span>
+      </div>
+    </div>
+  </div>
+</div>
+"""
+
 PROBE_JS = """
 function q(node, sel) { return node.querySelector(':scope > ' + sel); }
 function chevronCenter(node) {
@@ -145,6 +184,18 @@ function run() {
     doc_client: document.documentElement.clientWidth,
     page_hscrolls: document.documentElement.scrollWidth > document.documentElement.clientWidth
   };
+  var card = document.querySelector('.umetric');
+  if (card) {
+    var cr = card.getBoundingClientRect();
+    var val = card.querySelector('.umetric-value');
+    var chart = card.querySelector('.umetric-chart');
+    res.metric_card = {
+      height: Math.round(cr.height),
+      value_font: val ? Math.round(parseFloat(getComputedStyle(val).fontSize)) : null,
+      chart_ratio: chart ? Math.round((chart.getBoundingClientRect().width / cr.width) * 1000) / 10 : null,
+      overflows: card.scrollWidth > card.clientWidth
+    };
+  }
   document.getElementById('ux-measure').textContent = JSON.stringify(res);
 }
 run();
@@ -157,6 +208,7 @@ FIXTURE = """<!doctype html>
 </head>
 <body>
 %(tree)s
+%(metric)s
 <div class="notice warn"><span class="k">!</span><span>网关身份未核实</span></div>
 <div id="stage" style="width:780px">
 %(table)s
@@ -164,7 +216,7 @@ FIXTURE = """<!doctype html>
 <pre id="ux-measure">PENDING</pre>
 <script>%(js)s</script>
 </body></html>
-""" % {"tree": TREE_FIXTURE, "table": WIDE_TABLE, "js": PROBE_JS}
+""" % {"tree": TREE_FIXTURE, "metric": METRIC_CARD, "table": WIDE_TABLE, "js": PROBE_JS}
 
 
 def probe() -> dict:
@@ -211,4 +263,9 @@ if __name__ == "__main__":
     if w:
         print("== 浅色 warn 通告 ==")
         print("    %s on %s → 对比度 %.2f:1" % (w["color"], w["background"], w["ratio"] or -1))
+    mc = data.get("metric_card")
+    if mc:
+        print("== 总览指标卡 ==")
+        print("    高度 %spx, 大数字 %spx, 图表区占宽 %s%%, 溢出: %s"
+              % (mc["height"], mc["value_font"], mc["chart_ratio"], mc["overflows"]))
     sys.exit(0)

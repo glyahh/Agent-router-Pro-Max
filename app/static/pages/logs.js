@@ -7,6 +7,8 @@
  *   DELETE /api/logs              → {cleared:true}
  *   GET    /api/error-logs        → {files:[{name,size,modified}], dir}
  *   GET    /api/error-logs/<name> → 原始文本（可能被服务端截断，用 X-Prism-Truncated 标出）
+ *   DELETE /api/error-logs        → {deleted:[name], failed:[name]}   只删 error-*.log
+ *   DELETE /api/error-logs/<name> → {deleted:name}
  *
  * 注意 modified：server.py 给的是 ISO 字符串（不是 unix 时间戳），要按字符串解析。
  *
@@ -177,6 +179,7 @@
     errorFiles: null,
     errorErr: null,
     truncated: [],     // 被服务端截断过的错误日志文件名（靠 X-Prism-Truncated 判定）
+    errorBusy: false,  // 错误日志删除进行中，避免连点再发一次
     logTruncated: false,  // 本轮 /api/logs 的正文被服务端截断过（响应头 X-Prism-Truncated / data.truncated）
     truncProbed: {},   // name:size → 已探过，避免每 3s 重复发请求
   };
@@ -523,10 +526,60 @@
       });
   }
 
+  function confirmDeleteOne(name) {
+    if (!name || S.errorBusy) return;
+    var dlg = S.ctx && S.ctx.dialog;
+    if (typeof dlg !== 'function') return;
+    dlg({
+      title: '删除错误日志',
+      body: '删除 ' + name + '，删除后无法恢复。',
+      okText: '删除',
+      danger: true
+    }).then(function (yes) { if (yes) deleteError(name); });
+  }
+
+  function confirmDeleteAll() {
+    if (S.errorBusy) return;
+    var files = S.errorFiles && S.errorFiles.files;
+    if (!files || !files.length) return;
+    var dlg = S.ctx && S.ctx.dialog;
+    if (typeof dlg !== 'function') return;
+    dlg({
+      title: '删除全部错误日志',
+      body: '会删掉列表里的全部错误日志，删除后无法恢复。',
+      okText: '删除',
+      danger: true
+    }).then(function (yes) { if (yes) deleteError(null); });
+  }
+
+  function deleteError(name) {
+    if (S.errorBusy) return Promise.resolve();
+    if (name !== null && !name) return Promise.resolve();
+    var base = (S.errorFiles && S.errorFiles.base) || 'api/error-logs';
+    var path = name ? base + '/' + encodeURIComponent(name) : base;
+    S.errorBusy = true;
+    render();
+    return apiSend('DELETE', path).then(function (d) {
+      S.errorBusy = false;
+      var failed = d && d.failed;
+      if (failed && failed.length && S.ctx && S.ctx.toast) {
+        S.ctx.toast('删不掉：' + failed.join('、'), 'bad');
+      }
+      loadErrorFiles();
+    }, function (e) {
+      S.errorBusy = false;
+      if (S.ctx && S.ctx.toast) S.ctx.toast('删除失败：' + shortErr(e), 'bad');
+      render();
+    });
+  }
+
   function errorSection() {
-    var extra = button('刷新列表', function () { loadErrorFiles(); }, 'sm');
-    var sec = section('错误日志', null, errorBody(), extra);
-    return sec;
+    var files = S.errorFiles && S.errorFiles.files;
+    var extra = h('span', { class: 'logops' }, [
+      button('刷新列表', function () { loadErrorFiles(); }, 'sm'),
+      button('一键删除', confirmDeleteAll, 'sm danger', !files || !files.length || S.errorBusy)
+    ]);
+    return section('错误日志', null, errorBody(), extra);
   }
 
   function errorBody() {
@@ -541,12 +594,16 @@
       var href = S.errorFiles.base + '/' + encodeURIComponent(name);
       // 用原生 download 而不是 fetch 进内存：3MB 的文件走浏览器下载更省事
       var link = h('a', { class: 'btn sm', href: href, download: name, target: '_blank', rel: 'noopener' }, '下载');
+      var ops = h('span', { class: 'logops' }, [
+        name ? button('删除', function () { confirmDeleteOne(name); }, 'sm danger', S.errorBusy) : null,
+        link
+      ]);
       return [
         { text: name, cls: 'n' },
         { node: big ? chip('大文件', 'warn', '文件较大，可能已截断') : chip('正常'), cls: 'c' },
         { text: size(f.size), cls: 'c mono' },
         { text: mtime(f.modified), cls: 'c' },
-        { node: link, cls: 'c' }
+        { node: ops, cls: 'c' }
       ];
     });
 

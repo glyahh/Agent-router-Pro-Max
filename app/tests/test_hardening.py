@@ -119,6 +119,9 @@ class _Boom:
         if self.where == 'check':
             raise RuntimeError('判据自己炸了')
 
+    def _heads_arg(self, plan):
+        return None
+
 
 payload = {'selected': {'gpt': ['some-id'], 'deepseek': [], 'glm': []}}
 for where, label, need in (('read', '读 plan 失败', False),
@@ -378,7 +381,8 @@ try:
     rs.snapshot = _boom
     bridge.gateway_get = lambda path: {'codex-api-key': [], 'openai-compatibility': []}
     groups = bridge.enabled_groups()
-    check('三个分组都在', sorted(groups.keys()), ['deepseek', 'glm', 'gpt'])
+    _plan = rs.read_json(rs.ROOT / 'routing-plan.json')
+    check('分组与计划一致', sorted(groups.keys()), sorted(rs.group_ids(_plan)))
     check('每个分组的取值都是列表', sorted({type(v).__name__ for v in groups.values()}), ['list'])
     # 注意：这里**故意不写** `check_true(..., True)` 那种恒真断言（它永远 PASS，是假绿）。
     # "没调用 live fetch"这个属性由上面两个 _boom 桩保证：enabled_groups() 真去调
@@ -402,9 +406,12 @@ class _FakeSources:
              'expose': []},
         ]}
 
-    def _assert_heads_ok(self, providers, enabled):
+    def _assert_heads_ok(self, providers, enabled, agent_heads=None):
         _seen['providers'] = providers
         _seen['enabled'] = enabled
+
+    def _heads_arg(self, plan):
+        return None
 
 
 _orig_src = bridge._sources
