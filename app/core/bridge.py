@@ -53,20 +53,19 @@ from datetime import datetime
 from pathlib import Path
 
 if getattr(sys, 'frozen', False):
-    # 打包后 exe 与 config.yaml / script / auth 同级，数据目录就是 exe 所在目录。
-    # 代码进了包，__file__ 会指向 PyInstaller 的解压目录，不能再靠它推算——这是
-    # 打包后最容易出事的一处：算错了 config.yaml / auth 一个都找不到，且报错信息
-    # 会把人引向临时目录。
-    ROOT = Path(sys.executable).resolve().parent
-    APP_DIR = ROOT
+    # PyInstaller 的代码在 _internal；可写数据放安装目录的 .runtime/。
+    PROJECT_DIR = Path(sys.executable).resolve().parent
+    APP_DIR = PROJECT_DIR
 else:
     APP_DIR = Path(__file__).resolve().parent.parent      # <项目>\app
-    ROOT = APP_DIR.parent                                 # <项目>
+    PROJECT_DIR = APP_DIR.parent                          # <项目>
+
+ROOT = PROJECT_DIR / '.runtime'
 
 # 只读资源（static、design/icons）：打包时用 --add-data 放进 _MEIPASS，源码态就在 app\。
 # 与 APP_DIR 分开是因为打包后可写数据在 exe 旁边、只读资源在包内，两者不是同一个目录。
 BUNDLE_DIR = Path(getattr(sys, '_MEIPASS', APP_DIR))
-SCRIPT_DIR = ROOT / 'script'
+SCRIPT_DIR = PROJECT_DIR / 'script'
 
 # route_selector 的启动代码在 if __name__ == '__main__' 保护里，模块级只有常量和一个
 # 空的 build_opener，import 无副作用（已逐行核对 script/route_selector.py）。
@@ -91,7 +90,7 @@ DEFAULT_BAN_SECONDS = 1800        # 网关没给时长时的经验值：实测�
 AUTH_FAIL_FAST_SECONDS = 30       # 连续 401 后暂停打网关的窗口
 AUTH_FAIL_FAST_AT = 2             # 第几次 401 开始暂停
 
-LOCK_PATH = APP_DIR / 'route_selector.lock'
+LOCK_PATH = ROOT / 'route_selector.lock'
 HEX64 = re.compile(r'^[0-9a-f]{64}$')
 HTTP_CODE = re.compile(r'HTTP (\d{3})')
 # Go 的 time.Duration 文案：1h2m3.5s / 29m59.99s / 45s
@@ -105,6 +104,7 @@ CATALOG_PATH = ROOT / 'codex-model-catalog.json'
 # 所以"保存路由"实际会改四份文件。漏掉这一份，补偿时回滚了 catalog 却把被追加过的
 # 模板池留在新状态，下一次 regen 就会按"池里本来就有"处理，来源和档位都可能串味。
 TEMPLATES_PATH = ROOT / 'codex-model-catalog-templates.json'
+TEMPLATES_SOURCE = BUNDLE_DIR / 'data' / 'codex-model-catalog-templates.json'
 # 一次"保存路由"会同时改这四份**文件**，补偿时要一起备、一起核
 SWITCH_FILES = ('config.yaml', 'routing-plan.json', 'codex-model-catalog.json',
                 'codex-model-catalog-templates.json')
@@ -141,7 +141,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
     环回口 8317 上坐着的若不是本项目的网关，一个 302 就能把密钥送到任意主机。
 
     原先这里复用 `rs.LOCAL_OPENER`（那个 opener 没有 NoRedirect）。冻结文件里的
-    `LOCAL_OPENER` / `get_opener()` 要改得走 DEV-RULES D5，所以这里自建一个，
+    `LOCAL_OPENER` / `get_opener()` 要改得走 AGENTS.md 的复用约定，所以这里自建一个，
     先把管理密钥这条最高价值的路径堵上。
     """
 
@@ -440,8 +440,7 @@ debug: false
 auth-dir: '%(auth_dir)s'
 remote-management:
   allow-remote: false
-  # 明文写入是网关的官方约定（config.example.yaml：plaintext will be hashed on
-  # startup），网关启动时自己哈希——不必也不该在 Prism 里引入 bcrypt 依赖。
+  # 明文写入是网关的官方约定（网关启动时对明文哈希），网关启动时自己哈希——不必也不该在 Prism 里引入 bcrypt 依赖。
   secret-key: "%(management_key)s"
 api-keys:
   - "%(api_key)s"
@@ -467,6 +466,7 @@ def ensure_first_run_files() -> list[str]:
     401 并触发网关的 IP 封禁。只记日志，让人工处理。
     返回新建文件的文件名清单（空 = 已初始化过，一个字节没动）。
     """
+    ROOT.mkdir(parents=True, exist_ok=True)
     created: list[str] = []
     secrets_path = ROOT / '.local-secrets.json'
     config_path = ROOT / 'config.yaml'
@@ -506,8 +506,19 @@ def ensure_first_run_files() -> list[str]:
     if not plan_path.exists():
         if _atomic_write_json(plan_path, _EMPTY_PLAN):
             created.append(plan_path.name)
+    # 模板路径按当前 ROOT 现算，不读模块级 TEMPLATES_PATH：ROOT 是可以整体重定向的
+    # （回归测试把 bridge.ROOT 指到临时目录），模块常量仍指着真实 .runtime/，于是
+    # "全新目录"永远被判成"模板已在"，少生成一份，红得看不出跟引导逻辑有关。
+    templates_path = ROOT / 'codex-model-catalog-templates.json'
+    if not templates_path.exists() and TEMPLATES_SOURCE.is_file():
+        try:
+            template = TEMPLATES_SOURCE.read_text(encoding='utf-8-sig')
+            if _atomic_write_text(templates_path, template):
+                created.append(templates_path.name)
+        except OSError as exc:
+            log.warning('模型模板初始化失败：%s', type(exc).__name__)
     try:
-        (ROOT / 'auth').mkdir(exist_ok=True)   # 网关的 auth-dir 指这里，缺失会让首次登录没地方落
+        (ROOT / 'auth').mkdir(parents=True, exist_ok=True)   # 网关的 auth-dir 指这里，缺失会让首次登录没地方落
     except OSError:
         pass
     return created
@@ -738,7 +749,7 @@ def _timeout_error(elapsed: float) -> RouteError:
     )
 
 
-def _request(method: str, path: str, data=None, params: dict | None = None) -> dict:
+def _request(method: str, path: str, data=None, params: dict | None = None, *, yaml_body: bytes | None = None) -> dict:
     _ensure_checked()
     _raise_if_banned()
     url = _url(path)
@@ -751,6 +762,9 @@ def _request(method: str, path: str, data=None, params: dict | None = None) -> d
     if data is not None:
         body = json.dumps(data, ensure_ascii=False).encode('utf-8')
         headers['Content-Type'] = 'application/json'
+    if yaml_body is not None:
+        body = yaml_body
+        headers['Content-Type'] = 'application/yaml'
     req = urllib.request.Request(url, data=body, method=method.upper(), headers=headers)
     started = time.monotonic()
     try:
@@ -792,6 +806,11 @@ def gateway_get(path: str) -> dict:
 
 def gateway_put(path: str, data) -> dict:
     return _request('PUT', path, data=data)
+
+
+def gateway_put_yaml(raw: bytes) -> dict:
+    """保留原始 YAML 的更新入口；仍使用管理鉴权闸、免代理和免重定向。"""
+    return _request('PUT', 'config.yaml', yaml_body=raw)
 
 
 def gateway_delete(path: str, params: dict | None = None) -> dict:

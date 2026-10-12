@@ -40,8 +40,8 @@ if str(APP_DIR) not in sys.path:
 
 from core import bridge  # noqa: E402
 
-ROOT = bridge.ROOT                          # D:\MY_DESIGN\Agent-router-Pro-Max
-GATEWAY_EXE = ROOT / 'cli-proxy-api.exe'
+ROOT = bridge.ROOT
+GATEWAY_EXE = bridge.PROJECT_DIR / 'cli-proxy-api.exe'
 GATEWAY_CONFIG = ROOT / 'config.yaml'
 
 # 网关地址认 core/* 共用的那个开关。main.py 与 health.py 各算各的那份解析从

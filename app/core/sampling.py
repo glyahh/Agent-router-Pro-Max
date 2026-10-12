@@ -24,12 +24,6 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 APP_DIR = Path(__file__).resolve().parent.parent
-# 运行时数据（采样库、日志、设置）必须落在 exe 旁边，不能进 _internal：那里是
-# PyInstaller 的只读资源区，写进去用户看不到、备份不到，而且包内那份
-# app\usage-history.db 里已有的历史会读不到（托盘会每 5 秒报一次 no such table）。
-RUN_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else APP_DIR.parent
-DB_PATH = RUN_DIR / "usage-history.db"
-
 # route_selector 是唯一一份业务实现（38 个函数、11 个常量）。这里只借它的
 # ROOT 常量与 read_json（utf-8-sig），不搬任何逻辑，也不改写它。
 _SCRIPT_DIR = APP_DIR.parent / "script"
@@ -46,6 +40,9 @@ if str(APP_DIR) not in sys.path:
 from core import bridge  # noqa: E402  模块级无副作用（不碰网关、不写盘）
 
 ROOT = rs.ROOT
+# 运行数据统一放在安装目录的 .runtime/，不混进 PyInstaller 资源或源码目录。
+RUN_DIR = bridge.ROOT
+DB_PATH = RUN_DIR / "usage-history.db"
 # 转发给 health 之类只 import sampling 的地方用，不必再认识 bridge。
 auth_gate = bridge.auth_gate
 # 与 bridge 对齐：PRISM_GATEWAY_BASE 可把控制台指向沙箱桩，便于在真后端上复现

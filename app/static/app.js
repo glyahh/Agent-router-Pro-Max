@@ -173,7 +173,7 @@
   /* 控制台令牌（ME-12）：桌面版每次启动随机生成，经窗口 URL 的 ?t= 一次性交来。
      首次读到就转存 sessionStorage（不进历史记录、刷新不丢）；之后每个 /api/* 请求
      带 X-Prism-Token 头。浏览器直接打开（调试形态）没有 t，读到空串也无妨——
-     那种服务端根本不启用令牌校验。见 INTERFACES.md 的安全模型一节。 */
+     那种服务端根本不启用令牌校验。接口校验见 server.py。 */
   var _consoleToken = null;
   function consoleToken() {
     if (_consoleToken === null) {
@@ -1007,6 +1007,8 @@
   var PAGES = [
     { name: 'home', label: '首页', hash: '#/home', file: 'pages/home.js',
       desc: '来源与模型拓扑配置' },
+    { name: 'cursor', label: 'Cursor', hash: '#/cursor', file: 'pages/cursor.js',
+      desc: '模型与推理等级' },
     { name: 'manage', label: '管理', hash: '#/manage', file: 'pages/manage.js',
       desc: '分组与来源' },
     { name: 'usage', label: '用量', hash: '#/usage', file: 'pages/usage.js',
@@ -1083,7 +1085,7 @@
     if (flusher) {
       // 优先尝试调用 flushSave 自动落盘
       flusher().then(function () {
-        toast('配置已自动保存', 'ok');
+        if (!current || current.name !== 'cursor') toast('配置已自动保存', 'ok');
         bypassDirtyGuard = true;
         if (onProceed) onProceed();
       }).catch(function (err) {

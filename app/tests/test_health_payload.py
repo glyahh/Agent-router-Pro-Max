@@ -3,7 +3,7 @@
 跑法（在项目根目录）：
     python app\\tests\\test_health_payload.py
 
-**不碰生产数据**（DEV-RULES E4）：本文件只调纯解析函数，payload 全部是本文件
+**不碰生产数据**（AGENTS.md 的数据隔离要求）：本文件只调纯解析函数，payload 全部是本文件
 造出来的假数据 —— 不发任何网络请求（quota_state 传 dict、_routing 传 config 或
 None、_sources 全注入），不读生产日志（gateway_version 的缓存行为已有
 test_hardening §7 覆盖，这里不重复），不碰 usage-history.db。

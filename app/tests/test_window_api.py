@@ -3,6 +3,7 @@
 import sys
 import unittest
 import ctypes
+import types
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -10,6 +11,8 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 APP_DIR = ROOT / 'app'
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
+
+sys.modules.setdefault('webview', types.ModuleType('webview'))
 
 import main
 
@@ -62,7 +65,7 @@ class TestWindowApi(unittest.TestCase):
 
     def test_drag_start_move_end(self):
         """测试物理光标绝对坐标追踪拖拽流程。"""
-        with patch.object(main, '_own_hwnd', return_value=12345):
+        with patch.object(main.windowing, '_own_hwnd', return_value=12345):
             mock_user32 = MagicMock()
             def fake_get_rect(hwnd, ref):
                 ref._obj.left = 200
@@ -99,7 +102,7 @@ class TestWindowApi(unittest.TestCase):
 
     def test_resize_start_move_end_with_min_bounds(self):
         """测试八方向物理光标绝对坐标缩放及边界保护。"""
-        with patch.object(main, '_own_hwnd', return_value=12345):
+        with patch.object(main.windowing, '_own_hwnd', return_value=12345):
             mock_user32 = MagicMock()
             def fake_get_rect(hwnd, ref):
                 ref._obj.left = 100
@@ -147,7 +150,7 @@ class TestWindowApi(unittest.TestCase):
 
     def test_move_by(self):
         """测试 move_by 正确调用 Win32 SetWindowPos 计算坐标。"""
-        with patch.object(main, '_own_hwnd', return_value=12345):
+        with patch.object(main.windowing, '_own_hwnd', return_value=12345):
             mock_user32 = MagicMock()
             def fake_get_rect(hwnd, ref):
                 ref._obj.left = 100
@@ -166,7 +169,7 @@ class TestWindowApi(unittest.TestCase):
 
     def test_resize_by_right_bottom(self):
         """测试向右下缩放。"""
-        with patch.object(main, '_own_hwnd', return_value=12345):
+        with patch.object(main.windowing, '_own_hwnd', return_value=12345):
             mock_user32 = MagicMock()
             def fake_get_rect(hwnd, ref):
                 ref._obj.left = 100
@@ -187,7 +190,7 @@ class TestWindowApi(unittest.TestCase):
 
     def test_resize_by_left_top_with_min_bounds(self):
         """测试向左上缩放且不能小于最小宽度和高度。"""
-        with patch.object(main, '_own_hwnd', return_value=12345):
+        with patch.object(main.windowing, '_own_hwnd', return_value=12345):
             mock_user32 = MagicMock()
             def fake_get_rect(hwnd, ref):
                 ref._obj.left = 100
@@ -207,7 +210,7 @@ class TestWindowApi(unittest.TestCase):
 
     def test_drag_and_start_resize_do_not_crash(self):
         """测试在无真实句柄或抛异常时不会崩溃。"""
-        with patch.object(main, '_own_hwnd', return_value=None):
+        with patch.object(main.windowing, '_own_hwnd', return_value=None):
             self.api.drag()
             self.api.start_resize(2)
             self.api.drag_start()

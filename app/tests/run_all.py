@@ -11,6 +11,10 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 CASES = [
+    ('Cursor 独立入口与状态', 'test_cursor.py'),
+    ('Cursor 当前网关隔离回放', 'test_cursor_gateway.py'),
+    ('Cursor 隧道生命周期', 'test_cursor_tunnel.py'),
+    ('Cursor 真实页面交互', 'test_cursor_ui.py'),
     ('渠道头数据模型', 'test_heads.py'),
     ('路由核心（build_config / regen_catalog）', 'test_multi_source.py'),
     ('保存路由端到端', 'test_multi_source_save.py'),

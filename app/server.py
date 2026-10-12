@@ -1,20 +1,6 @@
-r"""Prism 控制台 HTTP 服务：HTTP API + 静态文件。
+r"""Prism 控制台 HTTP 服务：API 路由、安全闸和静态文件。
 
-契约在 app/INTERFACES.md 的「HTTP API 契约」一节。本文件只做 HTTP 层的事：
-路由、`{"ok":...}` 包装、错误到状态码的映射、静态文件，外加两个"前端要、但没有
-独立 core 模块承载"的聚合（用量的请求计数、日志尾部）。业务逻辑一律转调 core/*，
-core 再转调 route_selector —— 不在这里重写第二份。
-
-安全模型照搬 script/route_selector.py 的 Handler.check：
-  * Host 必须精确等于 127.0.0.1:<console_port>。用 localhost 或局域网地址访问一律拒绝，
-    因为控制台能改用户的网关配置，DNS rebinding 这类把戏必须挡在门外；
-  * 带 Origin 时必须是同源。浏览器里的其他站点因此打不进本机接口。
-拒绝用 409 而不是 403，是为了跟既有选择页的行为一致 —— 前端 app.js 对 404/409/5xx
-各有一套中文文案，行为一致才不会让用户看错原因。
-
-进程生命周期由调用方掌握：main.py 用 start_background(port) 起线程，
-`python server.py --port 8395` 则自己阻塞跑。退出本进程不关网关。
-停止网关只转调 core.gateway.stop_gateway，而且只停身份为 ok 的进程。
+业务逻辑转调 core/；来源路由由 route_selector 负责。
 """
 
 from __future__ import annotations
@@ -40,7 +26,7 @@ APP_DIR = Path(__file__).resolve().parent
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
-from core import agents, bridge, gateway, health, sampling, sources  # noqa: E402
+from core import agents, bridge, cursor, gateway, health, sampling, sources  # noqa: E402
 
 ROOT = bridge.ROOT
 RouteError = bridge.RouteError
@@ -77,6 +63,7 @@ def _ensure_logging() -> None:
         return
     root.setLevel(logging.INFO)
     try:
+        PRISM_LOG.parent.mkdir(parents=True, exist_ok=True)
         handler = logging.handlers.RotatingFileHandler(
             PRISM_LOG, maxBytes=LOG_MAX_BYTES, backupCount=LOG_BACKUPS, encoding='utf-8')
         handler.setFormatter(logging.Formatter(
@@ -254,6 +241,7 @@ def create_server(port: int = DEFAULT_PORT, token: str | None = None) -> Exclusi
 def stop_server(httpd: ExclusiveServer) -> None:
     """停服务。只作用于本进程内 create_server 出来的实例。"""
     try:
+        cursor.stop()
         httpd.shutdown()
     finally:
         httpd.server_close()
@@ -276,6 +264,7 @@ def _prune_backups() -> None:
 
 
 def _background_bootstrap() -> None:
+    cursor.restore()
     try:
         _preload_static_cache()
     except Exception:
@@ -306,7 +295,12 @@ def serve_forever(port: int = DEFAULT_PORT) -> None:
     httpd = create_server(port)
     _start_sampling()
     log.info('Prism 控制台已监听 http://127.0.0.1:%d/', httpd.console_port)
-    httpd.serve_forever(poll_interval=0.3)
+    cursor.restore()
+    try:
+        httpd.serve_forever(poll_interval=0.3)
+    finally:
+        cursor.stop()
+        httpd.server_close()
 
 
 def _apply_runtime_settings(settings: dict) -> None:
@@ -444,7 +438,7 @@ def _autostart_from_registry():
 
 # 主题检测：读 Windows 的「应用」主题（AppsUseLightTheme），不是「系统」主题 ——
 # 系统主题管的是任务栏/开始菜单，应用主题才管窗口底色，两者可以不一致。
-# 0 = 深色。机制与理由见 docs/adr/0010-dark-theme-follows-system.md。
+# 0 = 深色。读取 Windows 系统应用主题，显式主题由 effective_theme 决定。
 THEME_KEY = r'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'
 THEME_VALUE = 'AppsUseLightTheme'
 # index.html 里的占位属性，服务它时按系统主题替换成 dark。定长字节串，找不到就原样端出去。
@@ -1109,6 +1103,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _dispatch(self, method: str, path: str, query: dict, body):
         if method == 'GET':
+            if path == '/api/cursor':
+                return self._ok(cursor.snapshot())
             if path == '/api/state':
                 return self._ok(bridge.snapshot())
             if path == '/api/theme':
@@ -1148,6 +1144,10 @@ class Handler(BaseHTTPRequestHandler):
             raise HttpError(404, '没有这个接口：GET ' + path)
 
         if method == 'POST':
+            if path == '/api/cursor/tunnel':
+                return self._ok(cursor.tunnel(body or {}))
+            if path == '/api/cursor/access-key':
+                return self._ok(cursor.access_key(body or {}))
             if path == '/api/select':
                 return self._ok(bridge.apply_selection(body or {}))
             if path == '/api/connect':
@@ -1182,6 +1182,8 @@ class Handler(BaseHTTPRequestHandler):
             raise HttpError(404, '没有这个接口：POST ' + path)
 
         if method == 'PUT':
+            if path == '/api/cursor':
+                return self._ok(cursor.save(body or {}))
             hit = re.match(r'^/api/groups/([^/]+)$', path)
             if hit:
                 return self._ok(sources.rename_group(hit.group(1), body or {}))

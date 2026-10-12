@@ -3,15 +3,13 @@
 跑法（在项目根目录）：
     python app\\tests\\test_main_startup.py
 
-**不碰生产数据**（DEV-RULES E4）：
+**不碰生产数据**（AGENTS.md 的数据隔离要求）：
 * import main 前先把 webview / pystray 桩掉（测试解释器没装它们，main 顶层也只
   import 不实例化）—— 这样本文件在干净解释器里也能跑；
 * 端口探测用本进程自己起的 listener 与死端口，**不碰 8317**；
-* request_close / tray_tip 会碰 server.read_settings、sampling.history、
-  bridge.enabled_groups 三个真实数据源，全部桩掉 —— 不读生产 settings.json、
-  不碰 usage-history.db、不发环回管理请求（不经过 auth_gate）；
+* request_close 只读 server.read_settings，由本测试桩掉；
 * 单实例互斥（acquire_single_instance）**故意不测**：它会创建真实的全局命名
-  mutex，正是 HANDOFF §2.3 里"僵尸进程握着 mutex"那个陷阱的现场。
+  mutex，避免在测试进程里留下全局锁。
 """
 import io
 import json
@@ -32,12 +30,14 @@ sys.path.insert(0, str(ROOT / 'script'))
 sys.modules.setdefault('webview', types.ModuleType('webview'))
 sys.modules.setdefault('pystray', types.ModuleType('pystray'))
 
-from core import bridge, sampling  # noqa: E402
+from core import bridge, gateway, identity, sampling  # noqa: E402
 import server                      # noqa: E402
 import main                        # noqa: E402
+import diagnostics                 # noqa: E402
+import shell as desktop            # noqa: E402
 
 fails = []
-_DB_PATH = ROOT / 'usage-history.db'
+_DB_PATH = bridge.ROOT / 'usage-history.db'
 _DB_BEFORE = (_DB_PATH.stat().st_mtime_ns, _DB_PATH.stat().st_size) if _DB_PATH.exists() else None
 # E4 闸门基线：本文件测的 ensure_first_run_files 产出的就是这几类根文件——
 # 它们若被误写（函数改去用绝对路径绕过 bridge.ROOT 的 F-1 同类事故），这里必须红
@@ -48,7 +48,7 @@ def _fingerprint(p):
     return (p.stat().st_mtime_ns, p.stat().st_size) if p.exists() else None
 
 
-_ROOT_BEFORE = {n: _fingerprint(ROOT / n) for n in _ROOT_FILES}
+_ROOT_BEFORE = {n: _fingerprint(bridge.ROOT / n) for n in _ROOT_FILES}
 
 
 def check(name, got, want):
@@ -69,48 +69,43 @@ page = main._busy_page(8318, '测试占用原因')
 check_true('是完整 HTML 且标注端口',
            page.startswith('<!doctype html>') and '8318' in page, page[:80])
 check_true('故障排查命令指向本目录的 Stop-Selector.ps1',
-           'Stop-Selector.ps1' in page and str(main.ROOT / 'script') in page)
+           'Stop-Selector.ps1' in page and str(main.PROJECT_DIR / 'script') in page)
 page2 = main._busy_page(8390, '<script>alert(1)</script>')
 check_true('message 做过 html 转义', '&lt;script&gt;' in page2 and '<script>alert' not in page2)
 
 print()
 print('== 2. 自启命令（_launch_command）==')
-cmd = main._launch_command()
+cmd = desktop._launch_command()
 check_true('开发态用 pythonw（不弹黑框）', 'pythonw.exe' in cmd and 'main.py' in cmd, cmd)
 _frozen_exe, _frozen_flag = sys.executable, getattr(sys, 'frozen', False)
 try:
     sys.executable = r'C:\Program Files\Prism\Prism.exe'
     sys.frozen = True
-    cmd = main._launch_command()
+    cmd = desktop._launch_command()
     check('打包态就是 exe 本身加引号', cmd, '"%s"' % sys.executable)
 finally:
     sys.executable, sys.frozen = _frozen_exe, _frozen_flag
 
 print()
 print('== 3. 网关探测（不碰 8317）==')
-_orig_host, _orig_port = main.GATEWAY_HOST, main.GATEWAY_PORT
 listener = socket.socket()
 listener.bind(('127.0.0.1', 0))
 listener.listen(1)
 free_port = listener.getsockname()[1]
 try:
-    main.GATEWAY_HOST, main.GATEWAY_PORT = '127.0.0.1', free_port
-    check_true('本进程 listener 是"在监听"', main.gateway_listening(timeout=0.5))
-    main.GATEWAY_PORT = 1
-    check_true('死端口探不到（连接被拒）', not main.gateway_listening(timeout=0.5))
-    main.GATEWAY_HOST, main.GATEWAY_PORT = _orig_host, 8390
-    check_true('沙箱端口不代拉网关', not main.gateway_is_prisms_to_launch())
-    main.GATEWAY_HOST, main.GATEWAY_PORT = _orig_host, _orig_port
-    check_true('默认地址（config.yaml 那个）才代拉', main.gateway_is_prisms_to_launch())
+    check_true('本进程 listener 是"在监听"', gateway.port_open('127.0.0.1', free_port, timeout=0.5))
+    check_true('死端口探不到（连接被拒）', not gateway.port_open('127.0.0.1', 1, timeout=0.5))
+    check_true('沙箱地址不代拉网关', not main.gateway_proc.is_prisms_address('127.0.0.1', 8390))
+    check_true('默认地址由 Prism 管理', main.gateway_proc.is_prisms_address(
+        identity.DEFAULT_GATEWAY_HOST, identity.DEFAULT_GATEWAY_PORT))
 finally:
-    main.GATEWAY_HOST, main.GATEWAY_PORT = _orig_host, _orig_port
     listener.close()
 
 print()
 print('== 4. request_close：关窗口唯一入口 ==')
 _orig_read = server.read_settings
 try:
-    shell = main.Shell(8318)
+    shell = desktop.Shell(8318)
     hidden, notified = [], []
     shell.hide_window = lambda: hidden.append(1)
     shell.notify = lambda msg: notified.append(msg)
@@ -123,7 +118,7 @@ try:
     shell.quitting.set()
     server.read_settings = lambda: {'app': {'close_to_tray': True}}
     check('退出流程中不再拦（避免托盘退出死不掉）', shell.request_close(), True)
-    fresh = main.Shell(8318)          # 新实例：上面已把 quitting 置位，别让状态泄漏
+    fresh = desktop.Shell(8318)       # 新实例：上面已把 quitting 置位，别让状态泄漏
     fresh.hide_window = lambda: hidden.append(1)
     fresh.notify = lambda msg: notified.append(msg)
     server.read_settings = lambda: (_ for _ in ()).throw(RuntimeError('读不到'))
@@ -132,44 +127,29 @@ finally:
     server.read_settings = _orig_read
 
 print()
-print('== 5. 托盘文案（_tip_route / _tray_title）==')
-shell = main.Shell(8318)
-check('down 分支', shell._tip_route(main.IDENTITY_DOWN), '路由 网关未运行')
-check('foreign 分支', shell._tip_route(main.IDENTITY_FOREIGN),
-      '路由 网关不是本目录的，读不到')
-check('unknown 分支', shell._tip_route(main.IDENTITY_UNKNOWN),
-      '路由 网关身份未核实，读不到')
-_orig_groups = bridge.enabled_groups
+print('== 5. 托盘状态与提示 ==')
+shell = desktop.Shell(8318)
+_orig_identity = identity.gateway_identity
 try:
-    bridge.enabled_groups = lambda: {'gpt': ['openai-official', 'hub-big'],
-                                     'deepseek': 'goat', 'glm': []}
-    check('列表/字符串/空列表三种形状', shell._tip_route(main.IDENTITY_OK),
-          '路由 deepseek=goat glm=未选 gpt=openai-official、hub-big')
-    bridge.enabled_groups = lambda: {}
-    check('空路由', shell._tip_route(main.IDENTITY_OK), '路由 数据不可用')
-    bridge.enabled_groups = lambda: (_ for _ in ()).throw(RuntimeError('x'))
-    check('读路由失败不抛', shell._tip_route(main.IDENTITY_OK), '路由 数据不可用')
-finally:
-    bridge.enabled_groups = _orig_groups
-title = shell._tray_title('ok')
-check('标题极简为 Prism', title, 'Prism')
-_orig_identity = main.identity.gateway_identity
-try:
-    main.identity.gateway_identity = lambda: {'state': 'foreign'}
+    identity.gateway_identity = lambda: {'state': 'foreign'}
     check('gateway_state 透传 identity', shell.gateway_state(), 'foreign')
 finally:
-    main.identity.gateway_identity = _orig_identity
-
-print()
-print('== 6. tray_tip 极简（固定为 Prism，不超限）==')
-shell = main.Shell(8318)
-first = shell.tray_tip(now=1000.0)
-check('托盘悬浮提示固定为 Prism', first, 'Prism')
-check_true('tip 不超 Windows szTip 上限', len(first) <= main.TRAY_TIP_MAX, str(len(first)))
+    identity.gateway_identity = _orig_identity
+check('托盘名称极简', desktop.APP_NAME, 'Prism')
+icon = types.SimpleNamespace(icon=None, title='旧的冗长提示')
+shell.icon = icon
+shell.gateway_state = lambda: 'ok'
+_orig_image = desktop.tray_image
+try:
+    desktop.tray_image = lambda _state: None
+    shell.refresh_tray()
+    check('托盘提示只显示 Prism', icon.title, 'Prism')
+finally:
+    desktop.tray_image = _orig_image
 
 check_true('notify_already_running 是模块级函数（历史上曾被缩进进 notify_error 体内，'
            '第二次启动分支一走就 NameError 静默退出）',
-           callable(getattr(main, 'notify_already_running', None)))
+           callable(getattr(diagnostics, 'notify_already_running', None)))
 
 print()
 print('== 7. 启动体检（ME-03：bridge.verify_startup_files，全在临时目录）==')
@@ -251,12 +231,16 @@ finally:
 
 print()
 print('== 8. 首启引导（HI-03：bridge.ensure_first_run_files，全在临时目录）==')
+check('项目源码目录独立于运行数据目录', bridge.ROOT, ROOT / '.runtime')
+check('route_selector 共享同一运行目录', bridge.rs.ROOT, bridge.ROOT)
+check('网关程序保留在项目根目录', identity.GATEWAY_EXE, ROOT / 'cli-proxy-api.exe')
+check('网关配置位于 runtime/', identity.GATEWAY_CONFIG, bridge.ROOT / 'config.yaml')
 _froot = tempfile.mkdtemp(prefix='prism-first-run-')
 _orig_root2 = bridge.ROOT
 try:
     bridge.ROOT = Path(_froot)
-    check('全新目录：生成三个文件', sorted(bridge.ensure_first_run_files()),
-          ['.local-secrets.json', 'config.yaml', 'routing-plan.json'])
+    check('全新目录：生成配置、计划与模型模板', sorted(bridge.ensure_first_run_files()),
+          ['.local-secrets.json', 'codex-model-catalog-templates.json', 'config.yaml', 'routing-plan.json'])
     plan = json.loads(Path(_froot, 'routing-plan.json').read_text(encoding='utf-8'))
     check('空计划没有来源和分组', plan, {'providers': [], 'groups': [], 'selected': {}})
     saved = json.loads(Path(_froot, '.local-secrets.json').read_text(encoding='utf-8'))
@@ -268,7 +252,8 @@ try:
     check_true('api_key 进了网关放行清单',
                saved['api_key'].startswith('sk-prism-')
                and ('"%s"' % saved['api_key']) in cfg, saved['api_key'][:12] + '…')
-    check_true('auth 目录已建（网关 auth-dir 指它）', Path(_froot, 'auth').is_dir())
+    check_true('首启会创建完整运行目录结构', Path(_froot, 'auth').is_dir()
+               and Path(_froot, 'codex-model-catalog-templates.json').is_file())
     check_true('上游来源段是空列表（不编造凭据）',
                'codex-api-key: []' in cfg and 'openai-compatibility: []' in cfg)
     check('再跑一次幂等（一个字节不动）', bridge.ensure_first_run_files(), [])
@@ -318,8 +303,8 @@ _db_after = (_DB_PATH.stat().st_mtime_ns, _DB_PATH.stat().st_size) if _DB_PATH.e
 check('usage-history.db 跑完前后零变化', _db_after, _DB_BEFORE)
 for _n in _ROOT_FILES:
     check('生产 %s 零变化（首启引导若绕过 bridge.ROOT 这里必须红）' % _n,
-          _fingerprint(ROOT / _n), _ROOT_BEFORE[_n])
-backups_dir = ROOT / 'backups'
+          _fingerprint(bridge.ROOT / _n), _ROOT_BEFORE[_n])
+backups_dir = bridge.ROOT / 'backups'
 leaked = sorted(p.name for p in backups_dir.glob('prism-*')) if backups_dir.is_dir() else []
 check('生产 backups/ 没有漏进临时目录', leaked, [])
 

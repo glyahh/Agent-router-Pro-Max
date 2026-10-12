@@ -3,7 +3,7 @@
 跑法（在项目根目录）：
     python app\\tests\\test_server_http.py
 
-**不碰生产数据**（DEV-RULES E4）：
+**不碰生产数据**（AGENTS.md 的数据隔离要求）：
 * 全管线组用 `Handler.__new__` 造实例、rfile/wfile 都是 BytesIO，请求到不了任何端口；
 * 端到端组用 `create_server(0)` 起在随机回环端口，打的是本测试进程自己；
 * 分发路径会碰到的 `bridge.snapshot / apply_selection / gateway_get / gateway_put`
@@ -33,7 +33,7 @@ import server                      # noqa: E402
 
 fails = []
 # E4 闸门基线：进入本文件前生产库的指纹，退出前必须原样
-_DB_PATH = ROOT / 'usage-history.db'
+_DB_PATH = bridge.ROOT / 'usage-history.db'
 _DB_BEFORE = (_DB_PATH.stat().st_mtime_ns, _DB_PATH.stat().st_size) if _DB_PATH.exists() else None
 
 
@@ -346,7 +346,7 @@ print()
 print('== 9. 生产数据污染闸门（E4）==')
 _db_after = (_DB_PATH.stat().st_mtime_ns, _DB_PATH.stat().st_size) if _DB_PATH.exists() else None
 check('usage-history.db 跑完前后零变化', _db_after, _DB_BEFORE)
-backups_dir = ROOT / 'backups'
+backups_dir = bridge.ROOT / 'backups'
 auto_dirs = sorted(p.name for p in backups_dir.glob('prism-settings-*')) if backups_dir.is_dir() else []
 check('临时目录没有漏进生产 backups/', auto_dirs, [])
 

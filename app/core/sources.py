@@ -49,13 +49,13 @@ REASONING_LEVELS = ('low', 'medium', 'high', 'xhigh', 'max', 'ultra')
 # **渠道头**，拼在客户端可见的模型 ID 前面：srapi + '/' + gpt-5.6-sol。
 #
 # 为什么用别名而不是网关的 entry['prefix']：
-#   config.example.yaml:820-822 明确写着 "For strict backend pinning, use unique
+#   网关文档指出 strict backend pinning 应使用 unique
 #   aliases/prefixes or avoid overlapping names"，而 prefix 那个字段的示例只出现在
 #   codex-api-key / gemini-api-key / xai-api-key / claude-api-key / vertex-api-key，
 #   openai-compatibility 的示例里没有它 —— 而 deepseek / glm 两组走的正是
 #   openai-compatibility。别名机制两个段都吃，一处实现覆盖全部。
 #
-# 已实测（docs/evidence-p0-head-routing.txt，用临时网关实例 + 假上游，未碰生产配置）：
+# 已实测（本机历史回归记录，用临时网关实例 + 假上游，未碰生产配置）：
 #   gpt-5.6-sol            -> 200 -> 无头凭据 A
 #   srapi/gpt-5.6-sol      -> 200 -> 有头凭据 B，且上游收到的是剥掉头的 gpt-5.6-sol
 # 两个段（codex-api-key / openai-compatibility）都验过，force-model-prefix: true 无干扰。
@@ -363,7 +363,7 @@ def _gw_delete(name, params):
     return bridge.gateway_delete(name, params)
 
 
-# bridge 的路径约定见 INTERFACES.md：gateway_get(path) 等于 GET /v0/management/<path>。
+# bridge 的路径约定见 管理接口约定：gateway_get(path) 等于 GET /v0/management/<path>。
 # 三处调用集中在这里，万一 bridge 改成收完整路径，只改这三个包装。
 
 
@@ -1439,7 +1439,7 @@ def test_source(source_id):
 def preview_source(base_url, api_key=None, headers=None):
     """给**还没保存**的来源拉一次模型列表。
 
-    INTERFACES.md 的 HTTP 表里没有这个端点，但 static/pages/config.js 的"拉模型"
+    来源表单的"拉模型"
     按钮已经先试 POST /api/sources/preview、404 才退回旧快照；缺了它，新增来源
     就只能手敲模型 ID。server.preview_models 现在只做转调，实现就是这一份
     （返回里同时有 models 和 model_count，前端两种字段都认）。

@@ -1,6 +1,6 @@
 /* Prism · 日志页
  *
- * 数据来源（见 app/INTERFACES.md 与 app/server.py 实测）：
+ * 数据来源：
  *   GET    /api/logs?limit=N      → {lines:[str], line_count:int, truncated:bool}   取尾部 N 行
  *                                   单次读取撞到 server.py 的 MAX_TAIL_BYTES 时带
  *                                   X-Prism-Truncated: 1（truncated 是同一个值的 JSON 副本）
@@ -466,7 +466,7 @@
   }
 
   /* ── 错误日志下载 ───────────────────────────────────────────── */
-  // INTERFACES.md 的接口表里没写这条；server.py 实测提供 /api/error-logs。
+  // 接口约定里没写这条；server.py 实测提供 /api/error-logs。
   // 仍然留一次回退探测，宿主实现不同名也能用；两个都不通就说明白，不装。
   var ERROR_LIST_URLS = ['api/error-logs', 'api/logs/error-logs'];
 

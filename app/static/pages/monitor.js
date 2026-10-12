@@ -1,6 +1,6 @@
 /* Prism · 监控页
  *
- * 数据来源：GET /api/monitor（见 app/INTERFACES.md）
+ * 数据来源：GET /api/monitor（见 DEVELOPMENT.md）
  *   { gateway:{running,port,version,latest,version_stale,config_ok,
  *              identity,identity_note,identity_config},
  *     routing:{selected:{gpt,deepseek,glm}, exposed_models:[...]},
@@ -15,7 +15,7 @@
  *
  * 样式：全部用 app.css 的类名（.sec/.sechead/.tag/.btn/.tw/table.t/.statebox/
  * .notice/.card/.kv/.cols/.toolbar/.spacer/.sw2），和配置/用量/设置三页一致。
- * 不注入 <style>、不写 style="" 是照 DEV-RULES A1（设计系统只有 app.css 一份），
+ * 不注入 <style>、不写 style="" 是照 AGENTS.md 的前端约定（设计系统只有 app.css 一份），
  * **不是** CSP 挡的：server.py 的 CSP 是
  *   script-src 'self'（无 unsafe-inline）→ 内联 <script> 会被静默拦掉；
  *   style-src 'self' 'unsafe-inline' → 内联样式与注入 <style> 都是允许的。
@@ -191,7 +191,7 @@
   }
 
   /* 本页私有样式一条都不注入：不是 CSP 挡的（style-src 有 unsafe-inline，注入 <style> 允许），
-     而是照 DEV-RULES A1 —— 设计系统只有 app.css 一份，页面不复制它。
+     而是照 AGENTS.md 的前端约定 —— 设计系统只有 app.css 一份，页面不复制它。
      需要的视觉全部走 app.css 已有的类（.spacer/.kv/.toolbar/.tag/...）。 */
 
   /* ── 状态 ───────────────────────────────────────────────────── */

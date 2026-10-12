@@ -52,5 +52,5 @@ SOFTWARE.
 --------------------------------------------------------------------------------
 
 Python dependencies shipped inside the distribution are covered by their own
-licenses; see THIRD-PARTY-NOTICES.md for the per-package list and the
+licenses; see the third-party notices section in README.md for the per-package list and the
 LGPL-3.0 (pystray) compliance notes.

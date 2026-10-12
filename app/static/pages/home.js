@@ -17,9 +17,9 @@
  * 保留：底部「＋ 添加来源」表单、节点树、测试、代理端接入预览。
  * 不在这页：来源的编辑、删除、改渠道头，以及分组的增删改（在管理页）。
  *
- * ── 三个容易改错的点（都写在 docs/DEV-RULES.md 里）────────────────────
+ * ── 三个容易改错的点（都写在 AGENTS.md 里）────────────────────
  *  1. 样式：树本身的样式在 app.css 的「首页节点树」段，本页只注入**页面独有**的
- *     东西。详见 DEV-RULES A1/A2（页面 <style> 排在 app.css 之后，同权重时本页赢；
+ *     东西。详见 AGENTS.md 的前端约定（页面 <style> 排在 app.css 之后，同权重时本页赢；
  *     一条裸元素选择器就能把复选框拉成整行宽的近黑药丸——上线坏过一次）。
  *  2. 渠道头：客户端可见 ID = head + '/' + 干净别名。plan 里的 expose / models
  *     /model_settings 三处**始终用干净别名**，加了头的是"显示与写入 config 时的
@@ -43,7 +43,7 @@
     '.home *{box-sizing:border-box}',
     '.home .sechead{flex-wrap:wrap}',
     '.home .hr{display:none}',
-    // 输入控件基线。**必须排除 checkbox**（DEV-RULES A2，踩过一次）
+    // 输入控件基线。**必须排除 checkbox**（AGENTS.md 的前端约定，踩过一次）
     '.home select,.home input:not([type="checkbox"]),.home textarea{font-family:inherit;',
     '  font-size:13.5px;color:var(--fg);background:var(--panel);border:1px solid var(--line2);',
     '  border-radius:var(--r-ctl);padding:8px 11px;width:100%;min-width:0;',
@@ -127,7 +127,7 @@
   //     **一打开首页就露出来**；
   //   · 缺 `data` 分支 → `data:{role:'x'}` 变成属性 `data="[object Object]"`，
   //     按 `[data-role=…]` 的查询永远空集 → 分组"N / M 启用"计数不刷新、跳转高亮静默失效。
-  // 长远的修法是页面统一用 ctx.ui.h（见 HANDOFF §6.9 的 ME-10），本轮先把两个分支补齐。
+  // 长远的修法是页面统一用 ctx.ui.h（见 AGENTS.md 的复用约定），本轮先把两个分支补齐。
   // h/clear 用壳的单一实现（app.js）；原先各页一份私有副本，修 bug 不传播（审查 ME-10）。
   // 壳的 h 是这里的超集：value/checked/disabled 对新建元素语义等效，style 对象/字符串都收。
   var h = window.Prism.h, clear = window.Prism.clear, append = window.Prism.append;
@@ -934,7 +934,7 @@
     // 本函数原先声明在下面的 else 块里。本文件是 'use strict'（第 31 行），严格模式下
     // 块内函数声明**不外提**到函数作用域，于是 _mountKids / onExpand 闭包里
     // `typeof mountModels` 恒为 'undefined' —— 「全部展开」与点来源行都静默挂不出模型行
-    // （并行会话引入懒挂载时踩的，诊断见 HANDOFF §6.13）。挪到函数作用域即修复。
+    // （并行会话引入懒挂载时踩的，诊断见 AGENTS.md 的前端约定）。挪到函数作用域即修复。
     function mountModels() {
       if (modelWrap._mounted || !usable.length) return;
       modelWrap._mounted = true;

@@ -52,6 +52,10 @@ try:
     (tmp / '.local-secrets.json').write_text('{"management_key":"prism-x","api_key":"sk-prism-x"}',
                                              encoding='utf-8')
     (tmp / 'config.yaml').write_text('port: 1\n', encoding='utf-8')
+    # 模板一并预置：首启判定改成按当前 ROOT 现算之后，缺它这里会多补一份，
+    # 那与本用例要测的「已有文件不覆盖，只补缺的那份」无关。
+    (tmp / 'codex-model-catalog-templates.json').write_text(
+        bridge.TEMPLATES_SOURCE.read_text(encoding='utf-8-sig'), encoding='utf-8')
     created = bridge.ensure_first_run_files()
     check('只补 routing-plan.json', created, ['routing-plan.json'])
     plan_path = tmp / 'routing-plan.json'

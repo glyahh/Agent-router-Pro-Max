@@ -1,6 +1,6 @@
 /* Prism · 设置页  (app\static\pages\settings.js)
  *
- * 契约（INTERFACES.md「GET /api/settings 返回」）：
+ * 接口：
  *   GET  /api/settings → { gateway:{debug, proxy_url, request_retry, request_log},
  *                          app:{autostart, close_to_tray, sample_interval_sec, retention_days} }
  *   POST /api/settings ← 同结构。整份回传：后端自己 diff，再逐项

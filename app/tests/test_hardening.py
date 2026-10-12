@@ -202,7 +202,7 @@ check_true('patch 抛错 -> 如实说回滚失败（不谎报）', '回滚失败
 rs.auth_current, rs.patch_auth_models = _orig_cur, _orig_patch
 check_true('生产 auth 未被本测试改动',
            rs.auth_current() == json.loads(
-               (ROOT / 'auth' / 'codex-official.json').read_text(encoding='utf-8-sig')
+               (bridge.ROOT / 'auth' / 'codex-official.json').read_text(encoding='utf-8-sig')
            ).get('excluded_models'))
 
 print()
@@ -330,7 +330,7 @@ finally:
     # **顺序是关键。** 第 6 组真的起了采样守护线程（`_loop` 是 while True），而
     # `configure()` 会 `_wake.set()` **唤醒**它 —— 唤醒后它立刻调 `sample_once()` 与
     # `prune()`。若先恢复真实函数再唤醒，那一轮就会真打网关、并真跑 `prune(90)` 去改
-    # **生产 `usage-history.db`**（复查轮 10 的 F-3，与 F-1 同类，都违反 DEV-RULES E4）。
+    # **生产 `usage-history.db`**（复查轮 10 的 F-3，与 F-1 同类，都违反 AGENTS.md 的数据隔离要求）。
     # 所以：**先在桩还在的时候唤醒**，再恢复那些不改数据的桩（只恢复 start_scheduler，
     # 不恢复 sample_once/prune —— 进程随后就退出，恢复它们只会给守护线程重新装上真函数）。
     sampling.configure(600, 90)
@@ -537,9 +537,12 @@ _tmp = tempfile.mkdtemp(prefix='prism-prov-none-')
 _o = (agents._opencode_path, bridge.ROOT, agents._local_key)
 # **必须把 bridge.ROOT 也指到临时目录**：`_opencode_apply` 在写盘前会调 `_backup`，而它按
 # `bridge.ROOT/backups/` 落盘 —— 只桩 `_opencode_path` 的话，每跑一次用例就往**生产 backups/**
-# 留一个 `agent-connect-opencode-*` 目录（复查轮 9 的 F-1，实测已留 3 个），违反 DEV-RULES E4。
+# 留一个 `agent-connect-opencode-*` 目录（复查轮 9 的 F-1，实测已留 3 个），违反 AGENTS.md 的数据隔离要求。
 # 顺带把 `_local_key` 也桩掉：不依赖真实 .local-secrets.json，换机/CI 也能跑（F-2）。
-_before_pollution = set(p.name for p in (ROOT / 'backups').glob('agent-connect-opencode-*'))     if (ROOT / 'backups').is_dir() else set()
+# 闸门要盯的是**生产** backups/：下面把 bridge.ROOT 指到临时目录之后，再取它就不是生产
+# 那份了，所以先留一份。运行数据在 <项目>/.runtime/，不是项目根。
+_prod_root = _o[1]
+_before_pollution = set(p.name for p in (_prod_root / 'backups').glob('agent-connect-opencode-*'))     if (_prod_root / 'backups').is_dir() else set()
 try:
     _f = Path(_tmp, 'opencode.json')
     _f.write_text('{"provider": null}', encoding='utf-8')
@@ -559,7 +562,7 @@ try:
                    and agents.OPENCODE_PROVIDER_ID in _written['provider'],
                    str(_written)[:120])
     # 闸门：本用例绝不许往生产 backups/ 写东西（F-1）
-    _after_pollution = set(p.name for p in (ROOT / 'backups').glob('agent-connect-opencode-*'))         if (ROOT / 'backups').is_dir() else set()
+    _after_pollution = set(p.name for p in (_prod_root / 'backups').glob('agent-connect-opencode-*'))         if (_prod_root / 'backups').is_dir() else set()
     check('用例没有往生产 backups/ 写东西（F-1 闸门）',
           sorted(_after_pollution - _before_pollution), [])
 finally:

@@ -5,7 +5,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent / '.runtime'
 PORT = 8318
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     # 带凭据的出站（上游 sk- / 官方 OAuth）绝不跟随 3xx：CPython 的 redirect_request

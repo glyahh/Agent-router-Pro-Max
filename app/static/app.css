@@ -577,7 +577,7 @@ noscript .statebox{margin:40px auto;max-width:640px}
    四级：Agent → 分组 → 来源 → 模型。共用组件仍然用上面的通用规则，
    这里只放树独有的东西。
 
-   三条必须守住的约定（都是踩出来的，见 docs/DEV-RULES.md）：
+   三条必须守住的约定（都是踩出来的，见 AGENTS.md）：
      A1 颜色/圆角/间距一律走 :root 令牌，本段**不引入任何新色值**
      A2 不写裸元素选择器，一律 .graph/.gnode 前缀收窄
      A5 等宽只给数据（模型 ID、端点、数值），其余 --sans

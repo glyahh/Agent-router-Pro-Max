@@ -8,7 +8,7 @@
   * **预览**：直接读**真实的**配置文件。预览是只读的，所以可以拿真文件验解析器
     —— 这比拿合成样本验更有价值（Hermes 那份有 30 多行注释和两层嵌套）。
   * **写入**：只在合成的临时副本上做，并把 bridge.ROOT 重定向到临时目录。
-    **不把真实配置（含密钥）复制到 %TEMP%** —— 那个毛病以前犯过（HANDOFF §5.5
+    **不把真实配置（含密钥）复制到 %TEMP%** —— 那个毛病以前犯过（AGENTS.md 的数据隔离要求
     记录过 %TEMP% 里躺着 30 个含明文凭据的副本）。生产文件全程只读、逐字节不变。
 """
 import json
@@ -52,7 +52,7 @@ for aid in ('codex', 'claude-code', 'opencode', 'hermes'):
         print('        %-7s %-46s %r -> %r' % (c['kind'], c['key'], c['from'], c['to']))
 
 # codex 是个特例，**它现在本来就该是 blocked**：用户 2026-09-30 把 Codex 切回了纯官方
-# 登录（HANDOFF §6.5），config.toml 里 model_provider 是注释掉的。而 rs.patch_client_text
+# 登录（AGENTS.md 的来源接入约定），config.toml 里 model_provider 是注释掉的。而 rs.patch_client_text
 # 的第一行就是 `if parsed.get('model_provider')!='custom': raise`——前缀对不上时它改的
 # 不是用户正在用的那个 provider，所以拒绝是对的。这里断言"拒绝并且说清了原因"，
 # 而不是断言"没被拒"。
@@ -134,7 +134,7 @@ try:
     (TMP / 'backups').mkdir()
     # client_models() 要读 plan。routing-plan.json 自己的 note 就写着 "Provider mappings,
     # no secrets"，所以复制一份进沙箱是安全的（不像 settings.json / hermes 那样带密钥）。
-    shutil.copy2(ROOT / 'routing-plan.json', TMP / 'routing-plan.json')
+    shutil.copy2(bridge.ROOT / 'routing-plan.json', TMP / 'routing-plan.json')
     bridge.ROOT = TMP
     # 签发密钥桩死：rs.secrets() 读的是 rs.ROOT（重定向 bridge.ROOT 盖不住它），
     # 不桩的话每跑一次测试就读一遍真实 .local-secrets.json（审查 HI-02）。

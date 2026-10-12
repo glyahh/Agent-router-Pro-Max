@@ -292,7 +292,7 @@ class TestQuotaCardHasNoFiller(unittest.TestCase):
 
 
 class TestMonitorTerms(unittest.TestCase):
-    """同一实体必须一个词。CONTEXT.md 明确把「上游」列为禁用词。
+    """同一实体必须一个词。AGENTS.md 明确把「上游」列为禁用词。
 
     现在错在哪：指标卡写「活跃通道」，同页表格却写「上游来源」「来源」。
     用户体验：得自己推断「活跃通道」和下面的「来源」是不是一回事。

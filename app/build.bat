@@ -8,14 +8,12 @@ if not exist ".venv\Scripts\pyinstaller.exe" (
   echo [错误] 找不到 .venv\Scripts\pyinstaller.exe
   echo        先重建虚拟环境：
   echo          python -m venv .venv
-  echo          .venv\Scripts\python.exe -m pip install -r ..\requirements.lock
+  echo          .venv\Scripts\python.exe -m pip install -r requirements.lock
   exit /b 1
 )
 
-tasklist /fi "imagename eq Prism.exe" | findstr /i "Prism.exe" >nul
-if not errorlevel 1 (
-  echo [提示] 正在停止旧 Prism 客户端以释放文件锁...
-  taskkill /f /im Prism.exe >nul 2>&1
+for /f %%P in ('powershell -NoProfile -Command "$target=[IO.Path]::GetFullPath('%~dp0..\Prism.exe'); $p=Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'Prism.exe' -and $_.ExecutablePath -and [IO.Path]::GetFullPath($_.ExecutablePath) -ieq $target }; if ($p) { Stop-Process -Id $p.ProcessId -Force; $p.ProcessId }"') do (
+  echo [提示] 正在停止本目录的 Prism 客户端（PID %%P）以释放文件锁...
   timeout /t 1 /nobreak >nul
 )
 
@@ -24,7 +22,8 @@ echo [1/2] 打包中...
   --icon design\icons\prism.ico ^
   --version-file version_info.txt ^
   --add-data "static;static" ^
-  --add-data "design\icons;design\icons" ^
+  --add-data "data;data" ^
+  --add-data "design\icons\prism-64.png;design\icons" ^
   --exclude-module unittest ^
   --exclude-module pydoc ^
   --exclude-module pdb ^

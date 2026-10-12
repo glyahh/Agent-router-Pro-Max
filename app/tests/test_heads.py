@@ -156,7 +156,7 @@ check('新映射 srapi 行归 srapi', new['srapi/gpt-5.6-sol']['id'], 'srapi')
 check('新映射档位正确', new['srapi/gpt-5.6-sol']['settings']['default'], 'max')
 
 print('== 存量 routing-plan.json（只读）==')
-live = json.loads((ROOT / 'routing-plan.json').read_text(encoding='utf-8-sig'))
+live = S._read_plan()
 provs = live['providers']
 print('  来源数: %d，其中有 head 字段的: %d'
       % (len(provs), sum(1 for x in provs if 'head' in x)))
