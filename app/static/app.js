@@ -1806,8 +1806,10 @@
 
     document.addEventListener('keydown', function (e) {
       // 0. 弹窗打开时拦截页面导航键（Ctrl+1..6 / Ctrl+, / Ctrl+K / F5），只放行
-      //    Tab 与 Esc 交给弹窗自身的焦点循环与关闭逻辑
-      if (dlgOpen && e.key !== 'Tab' && e.key !== 'Escape' &&
+      //    Tab 与 Esc 交给弹窗自身的焦点循环与关闭逻辑。**编辑键也要放行**：弹窗里
+      //    本就是让你填东西的地方，把 Ctrl+V 一起拦掉，ngrok 授权那一步就贴不进来了。
+      var editKey = !!(e.key && /^[vcxazy]$/i.test(e.key));
+      if (dlgOpen && !editKey && e.key !== 'Tab' && e.key !== 'Escape' &&
           ((e.ctrlKey || e.metaKey || e.altKey) || e.key === 'F5' || e.keyCode === 116)) {
         e.preventDefault();
         return;

@@ -11,6 +11,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 CASES = [
+    ('全代理端请求统计与持久化', 'test_request_logs.py'),
+    ('日志明细真实页面交互', 'test_logs_ui.py'),
     ('Cursor 独立入口与状态', 'test_cursor.py'),
     ('Cursor 当前网关隔离回放', 'test_cursor_gateway.py'),
     ('Cursor 隧道生命周期', 'test_cursor_tunnel.py'),

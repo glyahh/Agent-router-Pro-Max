@@ -26,7 +26,7 @@ APP_DIR = Path(__file__).resolve().parent
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
-from core import agents, bridge, cursor, gateway, health, sampling, sources  # noqa: E402
+from core import agents, bridge, cursor, gateway, health, request_logs, sampling, sources  # noqa: E402
 
 ROOT = bridge.ROOT
 RouteError = bridge.RouteError
@@ -241,6 +241,7 @@ def create_server(port: int = DEFAULT_PORT, token: str | None = None) -> Exclusi
 def stop_server(httpd: ExclusiveServer) -> None:
     """停服务。只作用于本进程内 create_server 出来的实例。"""
     try:
+        request_logs.stop()
         cursor.stop()
         httpd.shutdown()
     finally:
@@ -285,6 +286,7 @@ def start_background(port: int = DEFAULT_PORT, token: str | None = None) -> Excl
     httpd.console_thread = thread
     threading.Thread(target=_background_bootstrap, name='prism-maint', daemon=True).start()
     _start_sampling()
+    request_logs.start()
     return httpd
 
 
@@ -294,11 +296,13 @@ def serve_forever(port: int = DEFAULT_PORT) -> None:
     _prune_backups()
     httpd = create_server(port)
     _start_sampling()
+    request_logs.start()
     log.info('Prism 控制台已监听 http://127.0.0.1:%d/', httpd.console_port)
     cursor.restore()
     try:
         httpd.serve_forever(poll_interval=0.3)
     finally:
+        request_logs.stop()
         cursor.stop()
         httpd.server_close()
 
@@ -733,12 +737,13 @@ def tail_lines(path: Path, limit: int, max_bytes: int = MAX_TAIL_BYTES):
 
 def read_logs(limit: int) -> dict:
     lines, truncated = tail_lines(MAIN_LOG, limit)
-    return {'lines': lines, 'line_count': len(lines), 'truncated': truncated}
+    return dict(lines=lines, line_count=len(lines), truncated=truncated, **request_logs.snapshot())
 
 
 def clear_logs() -> dict:
     """清空网关日志。走管理接口而不是直接删文件——网关自己持有文件句柄。"""
     bridge.gateway_delete('logs')
+    request_logs.clear()
     return {'cleared': True}
 
 
@@ -1148,6 +1153,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._ok(cursor.tunnel(body or {}))
             if path == '/api/cursor/access-key':
                 return self._ok(cursor.access_key(body or {}))
+            if path == '/api/cursor/selftest':
+                return self._ok(cursor.selftest())
             if path == '/api/select':
                 return self._ok(bridge.apply_selection(body or {}))
             if path == '/api/connect':

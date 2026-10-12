@@ -12,7 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'app'))
-from core import bridge, cursor, cursor_inference, identity
+from core import bridge, cursor, cursor_inference, identity, request_logs
 
 seen = []
 
@@ -75,6 +75,7 @@ with tempfile.TemporaryDirectory(prefix='prism-cursor-test-') as temporary:
     threading.Thread(target=upstream.serve_forever, daemon=True).start()
     base = 'http://127.0.0.1:%d/v1' % upstream.server_port
     config = {'host': '127.0.0.1', 'port': port, 'auth-dir': str(root / 'auth'),
+              'usage-statistics-enabled': True,
               'api-keys': ['local-test'], 'remote-management': {'secret-key': 'management-test'},
               'request-retry': 0, 'max-retry-credentials': 0,
               'codex-api-key': [{'api-key': 'upstream-codex', 'base-url': base,
@@ -97,6 +98,13 @@ with tempfile.TemporaryDirectory(prefix='prism-cursor-test-') as temporary:
              'expose': ['gpt-6.1-sol'], 'model_settings': {'gpt-6.1-sol': {
                  'levels': ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], 'default': 'high'}}}
             for name in ('codex', 'openai')]
+    for section in ('codex-api-key', 'openai-compatibility'):
+        config[section][0]['models'].append({'name': 'gpt-6-astra',
+                                            'alias': ('codex' if section == 'codex-api-key' else 'openai') + '/gpt-6-astra'})
+    (root / 'config.yaml').write_text(''.join(k + ': ' + json.dumps(v) + '\n' for k, v in config.items()), encoding='utf-8')
+    for row in rows:
+        row['expose'].append('gpt-6-astra')
+        row['model_settings']['gpt-6-astra'] = {'levels': ['medium', 'high'], 'default': 'high'}
     (root / 'routing-plan.json').write_text(json.dumps({'providers': rows, 'selected': {'gpt': ['codex', 'openai']}}))
     process = subprocess.Popen([str(ROOT / 'cli-proxy-api.exe'), '-config', str(root / 'config.yaml')],
                                cwd=root, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -115,7 +123,7 @@ with tempfile.TemporaryDirectory(prefix='prism-cursor-test-') as temporary:
                 time.sleep(.1)
         original_text = (root / 'config.yaml').read_text()
         ordinary = {'model': 'codex/gpt-6.1-sol', 'messages': [{'role': 'user', 'content': 'ordinary'}],
-                    'reasoning_effort': 'medium'}
+                    'reasoning_effort': 'medium', 'prompt_cache_key': 'ordinary-cache-key'}
         assert call(port, '/v1/chat/completions', ordinary, 'local-test')[0] == 200
         baseline = copy.deepcopy(seen[-1][1])
         cursor.install_rules()
@@ -126,7 +134,8 @@ with tempfile.TemporaryDirectory(prefix='prism-cursor-test-') as temporary:
         state.update(enabled=True); cursor._write('cursor-settings.json', state)
         service = cursor_inference.InferenceServer(
             ('127.0.0.1', 0), cursor_inference.Handler,
-            profile=cursor._profile, read_secrets=lambda: cursor._read('.local-secrets.json'))
+            profile=cursor._profile, read_secrets=lambda: cursor._read('.local-secrets.json'),
+            model_name=lambda: cursor._state()['model_name'])
         threading.Thread(target=service.serve_forever, daemon=True).start()
         revision = 1
         for source in ('codex', 'openai'):
@@ -159,9 +168,28 @@ with tempfile.TemporaryDirectory(prefix='prism-cursor-test-') as temporary:
                     status, raw = call(service.server_port, path, body, 'cursor-test')
                     assert status == 200 and b'check' in raw and b'keep' in raw, (source, path, stream, status, raw[:300])
             print('PASS', source, '工具调用 JSON/SSE')
+        # 每次控制台保存返回后立即请求；用旧的暴露名及冲突等级模拟 Cursor 缓存。
+        for source, model, level in [('codex', 'gpt-6-astra', 'high'),
+                                     ('codex', 'gpt-6-astra', 'medium'),
+                                     ('openai', 'gpt-6.1-sol', 'low')]:
+            saved = cursor.save({'source': source, 'model': model, 'level': level,
+                                 'model_name': 'cursor-renamed', 'revision': revision})
+            revision = saved['revision']
+            for path in ('/v1/chat/completions', '/v1/responses'):
+                for stream in (False, True):
+                    body = {'model': 'prism-cursor', 'stream': stream,
+                            'reasoning_effort': 'ultra', 'reasoning': {'effort': 'ultra'}}
+                    body.update({'messages': [{'role': 'user', 'content': 'hello'}]} if path.endswith('completions') else {'input': 'hello'})
+                    status, raw = call(service.server_port, path, body, 'cursor-test')
+                    assert status == 200, (source, model, level, path, status, raw[:200])
+                    actual, key = seen[-1][1:]
+                    effort = actual.get('reasoning', {}).get('effort') if source == 'codex' else actual.get('reasoning_effort')
+                    assert actual['model'] == model and effort == level and key == 'Bearer upstream-' + source, (actual, key)
+            print('PASS 下一请求最终上游', source, model, level, 'Chat/Responses JSON/SSE')
+        saved = cursor.save({'source': 'openai', 'model': 'gpt-6.1-sol', 'level': 'ultra', 'revision': revision})
+        revision = saved['revision']
         # 普通请求的等级仍由原网关决定，不匹配 Cursor 规则。
-        status, raw = call(port, '/v1/chat/completions', {'model': 'codex/gpt-6.1-sol',
-                           'messages': [{'role': 'user', 'content': 'ordinary'}], 'reasoning_effort': 'medium'}, 'local-test')
+        status, raw = call(port, '/v1/chat/completions', ordinary, 'local-test')
         assert status == 200 and seen[-1][1] == baseline, seen[-1][1]
         from core import sources
         parsed = bridge.gateway_get('config')
@@ -177,6 +205,22 @@ with tempfile.TemporaryDirectory(prefix='prism-cursor-test-') as temporary:
             'model': 'prism-cursor', 'messages': [{'role': 'user', 'content': 'after-save'}]}, 'cursor-test')[0] == 200
         assert seen[-1][1]['reasoning_effort'] == 'ultra'
         print('PASS 普通请求隔离、首页 build_config 保留规则、其他配置字节不变')
+        assert call(port, '/v1/messages', {
+            'model': 'openai/gpt-6.1-sol', 'max_tokens': 16, 'stream': True,
+            'messages': [{'role': 'user', 'content': 'hello'}]}, 'local-test')[0] == 200
+        # 真实网关统计队列：既包含直连网关，也包含 Cursor 转发。
+        for _ in range(30):
+            request_logs.collect_once()
+            metrics = request_logs.snapshot(200)['requests']
+            if len(metrics) >= 60: break
+            time.sleep(.1)
+        assert len(metrics) >= 60, (len(metrics), request_logs.snapshot()['request_error'])
+        assert {'codex/gpt-6.1-sol', 'openai/gpt-6.1-sol'} <= {r['requested_model'] for r in metrics}, metrics[:1]
+        assert {'gpt-6.1-sol', 'gpt-6-astra'} <= {r['upstream_model'] for r in metrics}, metrics[:1]
+        assert any(r['ttft_ms'] is not None and r['tokens_per_second'] is not None for r in metrics), metrics[:1]
+        assert all(r['output_tokens'] in (None, 2) for r in metrics)
+        assert not any('upstream-' in json.dumps(r) or 'ordinary' in json.dumps(r) for r in metrics)
+        print('PASS 全代理端真实统计队列、模型映射、流式计量与隐私白名单')
     finally:
         if service: service.shutdown(); service.server_close()
         process.terminate(); process.wait(timeout=10)

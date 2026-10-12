@@ -6,11 +6,17 @@ import logging
 import os
 import time
 import traceback
+import urllib.parse
+import webbrowser
 from ctypes import wintypes
 
 TITLE = 'Prism · 本地模型网关控制台'
 _logger = logging.getLogger('prism')
 MIN_WINDOW_SIZE = (900, 620)
+
+# open_url 允许打开的域名。它从前端拿到什么就打开什么，不校验等于把「打开任意链接」
+# 的能力交给页面内容；目前只有 Cursor 页那一步需要跳出应用去 ngrok。
+OPEN_URL_HOSTS = ('ngrok.com',)
 
 def log(message: str) -> None:
     _logger.info(message)
@@ -357,6 +363,60 @@ def make_window_api(shell, *, hwnd_lookup, read_settings, write_settings):
                 shell.window.minimize()
             except Exception:
                 log('最小化失败：\n' + traceback.format_exc())
+
+        def read_clipboard(self) -> str:
+            """读系统剪贴板里的文本，读不到返回空串。
+
+            WebView2 里原生 Ctrl+V 在这台机器上不生效——JS 层那个弹窗按键拦截去掉之后
+            仍然粘不进来，说明卡在更底下的剪贴板栈。这里直接问 Win32 要，绕开浏览器。
+            """
+            CF_UNICODETEXT = 13
+            u32 = ctypes.windll.user32
+            k32 = ctypes.windll.kernel32
+            u32.GetClipboardData.restype = ctypes.c_void_p
+            k32.GlobalLock.restype = ctypes.c_void_p
+            k32.GlobalLock.argtypes = [ctypes.c_void_p]
+            k32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+            if not u32.OpenClipboard(None):
+                return ''
+            try:
+                handle = u32.GetClipboardData(CF_UNICODETEXT)
+                if not handle:
+                    return ''
+                ptr = k32.GlobalLock(handle)
+                if not ptr:
+                    return ''
+                try:
+                    return ctypes.wstring_at(ptr)
+                finally:
+                    k32.GlobalUnlock(handle)
+            except Exception:
+                log('读剪贴板失败：\n' + traceback.format_exc())
+                return ''
+            finally:
+                u32.CloseClipboard()
+
+        def open_url(self, url: str) -> bool:
+            """用系统默认浏览器打开外部链接，返回是否真的打开了。
+
+            WebView2 里 <a target="_blank"> 唤不起系统浏览器，页面要跳出去只能走这里。
+            只放行 https 且域名落在 OPEN_URL_HOSTS 里的地址。
+            """
+            try:
+                parsed = urllib.parse.urlparse(str(url or ''))
+            except Exception:
+                return False
+            host = (parsed.hostname or '').lower()
+            allowed = any(host == h or host.endswith('.' + h) for h in OPEN_URL_HOSTS)
+            if parsed.scheme != 'https' or not allowed:
+                log('拒绝打开非白名单外链：%r' % (str(url)[:120],))
+                return False
+            try:
+                webbrowser.open(parsed.geturl())
+                return True
+            except Exception:
+                log('打开外链失败：\n' + traceback.format_exc())
+                return False
 
         def is_maximized(self) -> bool:
             """用 IsZoomed 问系统，不自己记状态。

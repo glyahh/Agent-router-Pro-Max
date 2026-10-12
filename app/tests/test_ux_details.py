@@ -323,6 +323,23 @@ class TestBannedTermsElsewhere(unittest.TestCase):
 
 # =============================================================== 键盘可达
 
+class TestModalPasteNotBlocked(unittest.TestCase):
+    """弹窗打开时的按键拦截把 Ctrl+V 一起吞了，弹窗里填不进东西。
+
+    现在错在哪：app.js 的全局 keydown 在 dlgOpen 时对「带 Ctrl/Meta/Alt 的按键」一律
+    preventDefault，本意是挡 Ctrl+1..6 / Ctrl+, / Ctrl+K 这些页面导航键，编辑键被误伤。
+    用户体验：复制了 ngrok 的 token，在授权弹窗里按 Ctrl+V 毫无反应，只能一个字符一个
+    字符手敲。
+    改完转绿：拦截分支里出现编辑键放行判定。
+    """
+
+    def test_edit_keys_pass_through_modal(self):
+        i = APP_JS.find("dlgOpen &&")
+        self.assertGreater(i, 0, "没找到弹窗按键拦截（条件改写后同步改断言）")
+        seg = APP_JS[max(0, i - 520):i + 260]
+        self.assertRegex(seg, r"[vcxazy]", "弹窗拦截没放行编辑键，Ctrl+V 会被吞掉")
+
+
 class TestSwitchKeyboard(unittest.TestCase):
     """.sw2 开关是 <span>+click，键盘与读屏完全不可用。
 

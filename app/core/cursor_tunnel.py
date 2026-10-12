@@ -19,6 +19,11 @@ from . import bridge
 
 DOWNLOAD = 'https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip'
 VERSION = '3.39.11'
+# 只收录确认过含义的错误码：106 = 拿的是 ngrok v1 的旧版 token，v3 agent 不认
+# （官方错误页 err_ngrok_106）。其余编号保持原样，用户拿着去查也不会被误导。
+NGROK_HINTS = {
+    'ERR_NGROK_106': 'token 是 ngrok v1 旧格式，去 dashboard 重新复制',
+}
 SHA256 = 'd339bcbd0713233337e860163f5249eea679cf26750a5700510dbc241d201748'
 _lock = threading.RLock()
 _worker = None
@@ -192,7 +197,10 @@ def _launch(executable, token, fixed_url):
         if _cancel.wait(.25):
             return None
         if errors:
-            raise bridge.RouteError('ngrok 授权、额度或入口错误（' + errors[0] + '）')
+            code = errors[0]
+            hint = NGROK_HINTS.get(code)
+            raise bridge.RouteError('ngrok 授权、额度或入口错误（' + code + '）'
+                                    + ('：' + hint if hint else ''))
         if process.poll() is not None:
             raise bridge.RouteError('ngrok 启动失败')
         try:

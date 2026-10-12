@@ -7,6 +7,7 @@ import socket
 import sys
 import tempfile
 import threading
+from unittest.mock import patch
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -20,6 +21,20 @@ def rejects(run):
     except bridge.RouteError:
         return
     raise AssertionError('应拒绝')
+
+
+# 启动准备阶段没有监听端口；不应把正常等待误报为连接拒绝。
+for state, summary in [
+    ({'enabled': False, 'starting': True, 'running': False, 'url': ''}, '入口正在启动'),
+    ({'enabled': True, 'starting': False, 'running': False, 'url': '',
+      'error': 'ngrok 签名或版本校验失败'}, 'ngrok 签名或版本校验失败'),
+    ({'enabled': True, 'starting': False, 'running': False, 'url': 'https://test.ngrok.dev'}, '本机入口未启动'),
+    ({'enabled': True, 'starting': False, 'running': True, 'url': ''}, '公网隧道未就绪'),
+]:
+    with patch.object(cursor, 'snapshot', return_value=state), patch.object(cursor, '_read') as read:
+        result = cursor.selftest()
+        assert result == {'ok': False, 'steps': [], 'summary': summary}, result
+        read.assert_not_called()
 
 
 seen = []
@@ -59,7 +74,7 @@ def request(server, method='POST', path='/v1/chat/completions', body=None, key='
     c = http.client.HTTPConnection('127.0.0.1', server.server_port, timeout=10)
     headers = {'Authorization': 'Bearer ' + key}
     headers.update(extra or {})
-    c.request(method, path, json.dumps(body or {'model': 'client-model'}).encode(), headers)
+    c.request(method, path, None if method == 'GET' else json.dumps(body or {'model': 'client-model'}).encode(), headers)
     r = c.getresponse(); result = r.status, r.read(); c.close()
     return result
 
@@ -91,10 +106,14 @@ with tempfile.TemporaryDirectory() as temporary:
     bridge.GATEWAY_BASE = 'http://127.0.0.1:%d' % gateway.server_port
     service = cursor_inference.InferenceServer(
         ('127.0.0.1', 0), cursor_inference.Handler,
-        profile=cursor._profile, read_secrets=lambda: cursor._read('.local-secrets.json'))
+        profile=cursor._profile, read_secrets=lambda: cursor._read('.local-secrets.json'),
+        model_name=lambda: cursor._state()['model_name'])
     threading.Thread(target=service.serve_forever, daemon=True).start()
     try:
         models = cursor.candidates(); assert len(models) == 2 and models[0]['default'] == 'medium'
+        assert cursor._state()['model_name'] == 'prism-cursor'
+        for invalid in ('', 'white space', 'x\nheader', '/leading', 'x' * 129, None, 123):
+            rejects(lambda: cursor.save({'source': 'one', 'model': 'gpt-6.1-sol', 'model_name': invalid, 'revision': 0}))
         saved = cursor.save({'source': 'one', 'model': 'gpt-6.1-sol', 'revision': 0})
         assert saved['level'] == 'medium' and saved['revision'] == 1
         rejects(lambda: cursor.save({'source': 'two', 'model': 'gpt-6.1-sol', 'revision': 0}))
@@ -122,6 +141,32 @@ with tempfile.TemporaryDirectory() as temporary:
         assert seen[-1][0]['model'] == 'one/gpt-6.1-sol'
         assert request(service)[0] == 200 and seen[-1][0]['model'] == 'two/gpt-6.1-sol'
         assert cursor._state()['source'] == 'two'
+        assert seen[-1][1]['X-Prism-Reasoning-Effort'] == 'high'
+        # 暴露名、目录、自检使用同一配置；旧客户端名不锁住旧路由。
+        saved = cursor.save({'source': 'one', 'model': 'gpt-6.1-sol', 'level': 'low',
+                             'model_name': 'my-cursor/model.v2', 'revision': cursor._state()['revision']})
+        assert cursor.snapshot()['model_name'] == saved['model_name']
+        assert json.loads(request(service, 'GET', '/v1/models')[1])['data'][0]['id'] == saved['model_name']
+        assert request(service, body={'model': 'prism-cursor', 'reasoning_effort': 'high'})[0] == 200
+        assert seen[-1][0]['model'] == 'one/gpt-6.1-sol' and seen[-1][1]['X-Prism-Reasoning-Effort'] == 'low'
+        assert 'reasoning_effort' not in seen[-1][0]
+        # 同一来源切换实际模型，随后再只切等级；每次下一请求必须取新值。
+        plan['providers'][0]['expose'].append('gpt-6-astra')
+        plan['providers'][0]['model_settings']['gpt-6-astra'] = {'levels': ['low', 'high'], 'default': 'high'}
+        config['codex-api-key'][0]['models'].append({'name': 'actual-astra', 'alias': 'one/gpt-6-astra'})
+        cursor._write('routing-plan.json', plan)
+        for level in ('low', 'high'):
+            saved = cursor.save({'source': 'one', 'model': 'gpt-6-astra', 'level': level, 'revision': saved['revision']})
+            assert request(service, path='/v1/responses', body={'model': 'prism-cursor', 'reasoning': {'effort': 'medium'}})[0] == 200
+            assert seen[-1][0]['model'] == 'one/gpt-6-astra' and seen[-1][1]['X-Prism-Reasoning-Effort'] == level
+            assert 'reasoning' not in seen[-1][0]
+        with patch.object(cursor, '_service', service), patch.object(cursor, 'PORT', service.server_port):
+            state = cursor._state(); state['url'] = 'http://127.0.0.1:%d' % service.server_port
+            cursor._write('cursor-settings.json', state)
+            assert cursor.selftest()['ok'], cursor.selftest()
+        saved = cursor.save({'source': 'two', 'model': 'gpt-6.1-sol', 'level': 'high', 'revision': saved['revision']})
+        assert saved['model_name'] == 'my-cursor/model.v2'
+        print('PASS 暴露名持久化、目录与自检、旧客户端名兼容、下一请求切换模型及等级')
         config['codex-api-key'][1]['excluded-models'] = ['*']
         assert request(service)[0] == 409
         config['codex-api-key'][1].pop('excluded-models')
@@ -183,8 +228,20 @@ with tempfile.TemporaryDirectory() as temporary:
             assert len(writes) == 2 and writes[0].startswith(raw_config) and writes[1] == raw_config
         finally:
             bridge.gateway_get, bridge.gateway_put_yaml = original_get, original_put
-        stored = cursor.access_key({'action': 'rotate'})['access_key']
+        before_secrets = (bridge.ROOT / '.local-secrets.json').read_bytes()
+        before_state = (bridge.ROOT / 'cursor-settings.json').read_bytes()
+        assert cursor.access_key({'action': 'copy'})['access_key'] == 'dedicated'
+        for confirmed in (None, False, 'true', 1):
+            rejects(lambda: cursor.access_key({'action': 'rotate', 'confirmed': confirmed}))
+        assert (bridge.ROOT / '.local-secrets.json').read_bytes() == before_secrets
+        assert (bridge.ROOT / 'cursor-settings.json').read_bytes() == before_state
+        stored = cursor.access_key({'action': 'rotate', 'confirmed': True})['access_key']
         assert stored != 'dedicated' and cursor._read('.local-secrets.json')['management_key'] == 'NEVER-FORWARD'
+        after_secrets = cursor._read('.local-secrets.json')
+        expected_secrets = json.loads(before_secrets); expected_secrets['cursor_access_key'] = stored
+        assert after_secrets == expected_secrets
+        assert (bridge.ROOT / 'cursor-settings.json').read_bytes() == before_state
+        print('PASS 复制不换密钥、未确认拒绝轮换、确认只更换 Cursor key 且 URL 不变')
         # 控制台 Cursor 接口不绕开统一安全闸。
         import server
         console = server.ExclusiveServer(('127.0.0.1', 0), server.Handler)
@@ -201,13 +258,21 @@ with tempfile.TemporaryDirectory() as temporary:
             status, raw = console_call('POST', '/api/cursor/access-key', body={'action': 'copy'})
             assert status == 200 and json.loads(raw)['data']['access_key'] == stored
             assert console_call('POST', '/api/cursor/tunnel', body={})[0] == 409
+            # 自检接口的返回契约：ok 是布尔、summary 是给用户看的一句话、steps 是逐段结果。
+            # 这里不断言当时处于哪种状态——启没启用都合法，钉住的是形状。
+            status, raw = console_call('POST', '/api/cursor/selftest', body={})
+            assert status == 200, status
+            payload = json.loads(raw)['data']
+            assert isinstance(payload.get('ok'), bool), payload
+            assert isinstance(payload.get('summary'), str) and payload['summary'], payload
+            assert isinstance(payload.get('steps'), list), payload
         finally:
             console.shutdown();console.server_close()
         with socket.socket() as occupied:
             occupied.bind(('127.0.0.1', 0)); occupied.listen()
             old_port = cursor.PORT; cursor.PORT = occupied.getsockname()[1]
             rejects(cursor.start_service); cursor.PORT = old_port
-        print('PASS Cursor 状态、唯一来源、协议、工具、等级、隔离、安全与端口冲突')
+        print('PASS Cursor 状态、唯一来源、协议、工具、等级、隔离、安全、端口冲突与自检')
     finally:
         release.set(); service.shutdown(); service.server_close(); gateway.shutdown(); gateway.server_close()
         identity.gateway_identity, bridge.gateway_get = original_identity, original_get

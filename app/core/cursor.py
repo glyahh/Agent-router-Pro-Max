@@ -36,8 +36,24 @@ def _write(name, value):
 
 
 def _state():
-    return _read('cursor-settings.json', {'source': None, 'model': None, 'level': None,
+    state = _read('cursor-settings.json', {'source': None, 'model': None, 'level': None,
                                          'enabled': False, 'url': '', 'revision': 0})
+    state.setdefault('model_name', MODEL)
+    return state
+
+
+def _mask_key(value):
+    """凭据收成能摆在界面上的样子：露头尾、中间打点。
+
+    过短的串（测试用的假值、或异常数据）一律只回一个省略号——这个结果是要发给前端的，
+    宁可界面上看不出是哪个，也不能把原值端出去。
+    """
+    text = str(value or '')
+    if not text:
+        return ''
+    if len(text) < 24:
+        return '…'
+    return text[:20] + '…' + text[-4:]
 
 
 def _secret_update(values):
@@ -51,6 +67,8 @@ def _secret_update(values):
 def access_key(body):
     if body.get('action') not in ('copy', 'rotate'):
         raise bridge.RouteError('action 必须为 copy 或 rotate')
+    if body['action'] == 'rotate' and body.get('confirmed') is not True:
+        raise bridge.RouteError('请先确认更换 API Key')
     with _lock, bridge._named_mutex():
         stored = _read('.local-secrets.json')
         if body['action'] == 'rotate' or not stored.get('cursor_access_key'):
@@ -157,8 +175,68 @@ def snapshot():
     except bridge.RouteError as exc:
         models, error = [], str(exc)
     from . import cursor_tunnel
+    stored = _read('.local-secrets.json')
     return dict(state, candidates=models, error=error or cursor_tunnel.error(),
-                model_name=MODEL, running=_service is not None, starting=cursor_tunnel.starting())
+                running=_service is not None, starting=cursor_tunnel.starting(),
+                has_authtoken=bool(stored.get('cursor_ngrok_authtoken')),
+                access_key_masked=_mask_key(stored.get('cursor_access_key')))
+
+
+def selftest():
+    """按当前选择做一次最小连通测试。
+
+    真发一个 /v1/models 请求，分别打到本机 8319 入口和隧道公网地址，逐段给结论——
+    比"配置看着对"有用：链路断在哪一段，一眼能看出来。只读，不改任何状态。
+    """
+    state = snapshot()
+    if state.get('starting'):
+        return {'ok': False, 'steps': [], 'summary': '入口正在启动'}
+    if state.get('error'):
+        return {'ok': False, 'steps': [], 'summary': state['error']}
+    if not (state.get('enabled') or state.get('starting')):
+        return {'ok': False, 'steps': [], 'summary': '还没启用'}
+    if not state.get('running'):
+        return {'ok': False, 'steps': [], 'summary': '本机入口未启动'}
+    if not state.get('url'):
+        return {'ok': False, 'steps': [], 'summary': '公网隧道未就绪'}
+    secret = str(_read('.local-secrets.json').get('cursor_access_key') or '')
+    steps = []
+
+    def probe(name, base):
+        if not base:
+            steps.append({'name': name, 'ok': False, 'detail': '地址为空'})
+            return
+        try:
+            parts = urlsplit(base)
+            secure = parts.scheme == 'https'
+            cls = http.client.HTTPSConnection if secure else http.client.HTTPConnection
+            conn = cls(parts.hostname, parts.port or (443 if secure else 80), timeout=6)
+            try:
+                conn.request('GET', '/v1/models', headers={'Authorization': 'Bearer ' + secret})
+                resp = conn.getresponse()
+                raw = resp.read(1 << 16)
+                if resp.status != 200:
+                    steps.append({'name': name, 'ok': False,
+                                  'detail': 'HTTP %d' % resp.status})
+                    return
+                data = json.loads(raw.decode('utf-8', 'replace') or '{}')
+                ids = [item.get('id') for item in (data.get('data') or [])]
+                if state['model_name'] not in ids:
+                    steps.append({'name': name, 'ok': False,
+                                  'detail': '通了，但没看到模型 %s' % state['model_name']})
+                    return
+                steps.append({'name': name, 'ok': True, 'detail': 'HTTP 200'})
+            finally:
+                conn.close()
+        except Exception as exc:                       # noqa: BLE001 - 什么错都要说成人话
+            steps.append({'name': name, 'ok': False,
+                          'detail': type(exc).__name__ + '：' + str(exc)[:80]})
+
+    probe('本机入口', 'http://127.0.0.1:%d' % PORT)
+    probe('公网隧道', str(state.get('url') or ''))
+    bad = [s for s in steps if not s['ok']]
+    summary = '链路正常' if not bad else '；'.join('%s %s' % (s['name'], s['detail']) for s in bad)
+    return {'ok': not bad, 'steps': steps, 'summary': summary}
 
 
 def save(body):
@@ -166,6 +244,9 @@ def save(body):
         state = _state()
         if type(body.get('revision')) is not int or body['revision'] != state['revision']:
             raise bridge.RouteError('Cursor 选择已变化，请刷新')
+        model_name = body.get('model_name', state['model_name'])
+        if not isinstance(model_name, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._/-]{0,127}', model_name):
+            raise bridge.RouteError('模型名限 1–128 位字母、数字及 . _ / -，以字母或数字开头')
         models = candidates()
         selected = next((m for m in models if m['source'] == body.get('source')
                          and m['model'] == body.get('model')), None)
@@ -175,10 +256,10 @@ def save(body):
         level = body.get('level', selected['default'] if changed else state['level'])
         if level not in selected['levels'] and not (level is None and not selected['levels']):
             raise bridge.RouteError('模型未声明该推理等级')
-        state.update(source=selected['source'], model=selected['model'], level=level,
+        state.update(source=selected['source'], model=selected['model'], level=level, model_name=model_name,
                      revision=state['revision'] + 1)
         _write('cursor-settings.json', state)
-        return dict(state, candidates=models, model_name=MODEL, error='')
+        return dict(state, candidates=models, error='')
 
 
 def install_rules():
@@ -198,7 +279,7 @@ def _profile():
             payload = bridge.gateway_get('config').get('payload')
             if not payload_equal(payload, merge_payload(payload)):
                 raise bridge.RouteError('Cursor 等级规则缺失')
-        return dict(selected, level=state['level'])
+        return dict(selected, level=state['level'], model_name=state['model_name'])
 
 
 def start_service():
@@ -208,7 +289,8 @@ def start_service():
             try:
                 _service = cursor_inference.InferenceServer(
                     ('127.0.0.1', PORT), cursor_inference.Handler,
-                    profile=_profile, read_secrets=lambda: _read('.local-secrets.json'))
+                    profile=_profile, read_secrets=lambda: _read('.local-secrets.json'),
+                    model_name=lambda: _state()['model_name'])
             except OSError:
                 raise bridge.RouteError('Cursor 端口 8319 被占用') from None
             threading.Thread(target=_service.serve_forever, name='prism-cursor', daemon=True).start()

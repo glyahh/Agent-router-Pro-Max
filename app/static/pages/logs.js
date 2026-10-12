@@ -157,6 +157,8 @@
   var S = {
     root: null,
     ctx: null,
+    requests: [],
+    requestError: '',
     timer: null,
     auto: true,
     hideMgmt: true,
@@ -244,6 +246,7 @@
     r.appendChild(section('日志', null, h('div', null, [
       toolbar(),
       notes(),
+      requestDetails(),
       logView(),
       footbar()
     ])));
@@ -252,6 +255,30 @@
   }
 
   var filterDebounceTimer = null;
+  function requestDetails() {
+    var matcher = makeMatcher(S.query);
+    var rows = S.requests.filter(function (r) {
+      if (S.levelFilter !== 'all' && !r.failed) return false;
+      return !matcher || matcher.bad || matcher([r.requested_model, r.upstream_model, r.reasoning_level, r.request_id].join(' '));
+    }).map(function (r) {
+      function elapsed(v) { return typeof v === 'number' && isFinite(v) ? (v / 1000).toFixed(2) + ' s' : '—'; }
+      var date = new Date(r.timestamp);
+      return [
+        h('span', {text: isNaN(date.getTime()) ? '—' : clock(date), title: r.timestamp}),
+        h('span', {text: r.requested_model || '—', title: r.request_id || null}),
+        h('span', {text: r.upstream_model || '—', title: r.response_model ? '响应模型：' + r.response_model : null}),
+        r.reasoning_level || '—',
+        chip(r.failed ? (r.status || '失败') : '成功', r.failed ? 'bad' : ''),
+        elapsed(r.duration_ms), elapsed(r.ttft_ms),
+        h('span', {text: typeof r.tokens_per_second === 'number' ? r.tokens_per_second.toFixed(2) : '—',
+          title: '输出 token（含推理） / 首次输出至完成的秒数'})
+      ];
+    });
+    return h('div', {id: 'pm-request-details'}, table([
+      {t: '时间'}, {t: '请求模型'}, {t: '上游模型'}, {t: '推理等级'},
+      {t: '状态'}, {t: '耗时'}, {t: '首次输出'}, {t: 'Token/s'}
+    ], rows, null));
+  }
   function toolbar() {
     var input = h('input', {
       type: 'search', size: 28, placeholder: '搜索日志', value: S.query,
@@ -310,6 +337,7 @@
     S.confirmClear = false;
     clearTimeout(S.confirmTimer);
     return apiSend('DELETE', 'api/logs').then(function () {
+      S.requests = [];
       S.raw = []; S.filtered = []; S.hiddenCount = 0; S.errCount = 0; S.gap = false; S.err = null;
       S.busy = false;
       render();
@@ -698,6 +726,10 @@
       // 飞行中的轮询响应可能在切页（unmount 清缓冲）之后才回来，那时再 push 会把刚清掉的
       // 缓冲重新填上，下次进来先渲染一份**上一挂载的残留**（复查轮 6 的 4-2）。
       if (!S.root) return;
+      S.requests = d && Array.isArray(d.requests) ? d.requests : [];
+      var requestError = d && d.request_error || '';
+      if (requestError && requestError !== S.requestError && S.ctx && S.ctx.toast) S.ctx.toast(requestError, 'bad');
+      S.requestError = requestError;
       var lines = (d && Array.isArray(d.lines)) ? d.lines.map(String) : [];
       // 截断标志有两个来源，谁在就用谁：自己发的请求挂在 data._truncated（响应头原文），
       // 走壳的时候读 data.truncated —— server.py 里这两个就是同一个布尔值，头给不看 JSON
@@ -757,7 +789,7 @@
   // 增量追加：只加新的行，避免每 3s 重建几千个 DOM 节点
   function incremental(appended) {
     if (!S.root) return;
-    if (!appended) { render(); return; }        // 走的是"整块重算"分支
+    if (!appended) { renderBody(); patchToolbar(); return; }
     var box = document.getElementById('pm-logview');
     // 空态（筛选不到任何行）切回有行：只能重画日志区，**不能**调 render() ——
     // render() 会 clear 整个 sec 再重建，把搜索框那个 input 节点一起换掉，
@@ -781,6 +813,7 @@
       updateBadge();
     }
     swap('#pm-notes', notes);
+    swap('#pm-request-details', requestDetails);
     // 工具条不给 swap：它里面有搜索框，整块换掉就是换掉那个 input 节点，
     // 焦点和光标位置跟着一起没。实测 350ms/字符输入时每 3s 断一次，
     // "gin_logger" 只落进去 8 个字符。轮询里唯一会变的是「刷新」的禁用态。
@@ -796,7 +829,14 @@
 
   function swap(sel, make) {
     var old = S.root.querySelector(sel);
-    if (old) old.parentNode.replaceChild(make(), old);
+    if (old) {
+      var scroll = old.querySelector('.tw');
+      var top = scroll ? scroll.scrollTop : 0, left = scroll ? scroll.scrollLeft : 0;
+      var next = make();
+      old.parentNode.replaceChild(next, old);
+      var nextScroll = next.querySelector('.tw');
+      if (nextScroll) { nextScroll.scrollTop = top; nextScroll.scrollLeft = left; }
+    }
   }
 
   // 只搜索框重画：保留光标和输入焦点
@@ -804,6 +844,7 @@
     if (!S.root) return;
     applyFilter();
     swap('#pm-notes', notes);
+    swap('#pm-request-details', requestDetails);
     var old = document.getElementById('pm-logview');
     var oldWrap = old ? old.closest('.logview-wrap') : S.root.querySelector('.statebox');
     if (oldWrap) oldWrap.parentNode.replaceChild(logView(), oldWrap);
@@ -866,6 +907,7 @@
     // 找不到重叠（离开期间网关写了超过一屏）时整个尾部被当成"新增"追加 → 界面出现重复行，
     // 而提示文案说的却是"可能有遗漏行"（复查轮 5 的 #C）。
     S.raw = []; S.filtered = []; S.hiddenCount = 0; S.errCount = 0;
+    S.requests = []; S.requestError = '';
     S.filterKey = ''; S.gap = false; S.err = null; S.unreadCount = 0;
     MOUNTED = false;
   }

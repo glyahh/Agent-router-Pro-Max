@@ -31,9 +31,10 @@ class InferenceServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = False
 
-    def __init__(self, *args, profile, read_secrets):
+    def __init__(self, *args, profile, read_secrets, model_name=lambda: MODEL):
         self.profile = profile
         self.read_secrets = read_secrets
+        self.model_name = model_name
         self.slots = threading.BoundedSemaphore(32)
         self.connections = set()
         self.connections_lock = threading.Lock()
@@ -108,7 +109,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._fail(401, '凭据无效')
             if self.path != '/v1/models':
                 return self._fail(404, '接口不存在')
-            self._json(200, {'object': 'list', 'data': [{'id': MODEL, 'object': 'model', 'owned_by': 'prism'}]})
+            self._json(200, {'object': 'list', 'data': [{'id': self.server.model_name(), 'object': 'model', 'owned_by': 'prism'}]})
         except bridge.RouteError:
             self._fail(409, 'Cursor 凭据不可用')
         except OSError:
@@ -144,7 +145,8 @@ class Handler(BaseHTTPRequestHandler):
                     or len(body.get('model', MODEL)) > 256):
                 return self._fail(400, '请求格式无效')
             profile = self.server.profile()
-            client_model = body.get('model') or MODEL
+            # 每条请求获取一次最新快照；已执行的请求不随之后的保存发生漂移。
+            client_model = body.get('model') or profile.get('model_name', MODEL)
             body['model'] = profile['gateway_model']
             for key in ('reasoning', 'reasoning_effort', 'thinking'):
                 body.pop(key, None)

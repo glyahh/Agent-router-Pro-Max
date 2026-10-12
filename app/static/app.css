@@ -243,7 +243,17 @@ body.is-maximized .win-resizer{display:none}
 .f input:not([type="checkbox"])::placeholder{color:var(--fg3)}
 .f input:not([type="checkbox"]):focus,.f select:focus,textarea.inp:focus{outline:none;border-color:var(--fg);
     box-shadow:0 0 0 1.5px var(--fg)}
-.f input:not([type="checkbox"]):disabled,.f select:disabled{color:var(--fg3);background:var(--panel2);cursor:not-allowed}
+.f input:not([type="checkbox"]):disabled,.f select:disabled{color:var(--fg3);background-color:var(--panel2);cursor:not-allowed}
+/* 下拉箭头自绘。原生箭头由浏览器画，focus / disabled 态下的位置与外观不跟样式走，
+   并排两个 select 的箭头因此对不齐（Cursor 页「模型」聚焦、「推理等级」未选时是 disabled，
+   实测一高一低一粗一细）。接管后位置钉死在右内边距中央，两个主题各一份 data URI，
+   颜色与 --fg3 对齐（改配色时这里要一起改）。 */
+.f select{appearance:none;-webkit-appearance:none;padding-right:34px;cursor:pointer;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.75 6 7.75 9 4.75' fill='none' stroke='%236E6E80' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 11px center;background-size:12px 12px}
+html[data-theme="dark"] .f select{
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.75 6 7.75 9 4.75' fill='none' stroke='%238E8E8E' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")}
+
 .f .sub{font-size:12px;color:var(--fg3)}
 .f .sub.bad{color:var(--bad)}
 .f .sub.warn{color:var(--warn)}
@@ -340,6 +350,8 @@ table.t .act{text-align:right;white-space:nowrap}
 table.t .act .btn{margin-left:0}
 table.t .act .btn + .btn{margin-left:6px}
 .tw{overflow:auto;border:1px solid var(--line);border-radius:var(--r-card);background:var(--panel);box-shadow:var(--shadow)}
+.pm-logs-page #pm-request-details .tw{max-height:320px;margin-bottom:12px}
+.pm-logs-page #pm-request-details th{position:sticky;top:0;z-index:1;background:var(--panel)}
 .tw table.t td,table.t.static td{background:transparent}
 .tw table.t th{padding:10px 14px}
 .tw table.t th:first-child{padding-left:16px}
@@ -436,6 +448,9 @@ table.t .act .btn + .btn{margin-left:6px}
 .dlg .h{padding:14px 18px;border-bottom:1px solid var(--line);font-size:14px;font-weight:600;color:var(--fg)}
 .dlg .b{padding:18px;font-size:13.5px;color:var(--fg2);line-height:1.6}
 .dlg .f2{padding:12px 18px;border-top:1px solid var(--line);background:var(--panel2);display:flex;gap:8px;justify-content:flex-end}
+/* 弹窗里的「输入框 + 粘贴按钮」一行 */
+.dlg .row{display:flex;gap:8px;align-items:center}
+.dlg .row input{flex:1;min-width:0}
 @keyframes modalIn{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:scale(1)}}
 #toasts{position:fixed;right:20px;bottom:calc(var(--status-h) + 16px);z-index:50;display:flex;
         flex-direction:column;gap:8px;align-items:flex-end;pointer-events:none}
@@ -476,6 +491,50 @@ noscript .statebox{margin:40px auto;max-width:640px}
    ⚠ CSP 见 server.py:117：style-src 是 `'self' 'unsafe-inline'`。早期这里写的是
      "只有 'self'，注入 <style> 会被拦掉"，那句话已经过期（config.js / settings.js
      都要注入样式，所以后来放开了）。本页样式仍然留在这里，是历史选择，不是 CSP 限制。 */
+/* ── Cursor 页 ─────────────────────────────────────────────
+   放在 .btn 段之后：test_ux_details 的 cursor 一致性断言用字符串首次匹配
+   ".btn{" 定位通用按钮规则，这段里若出现同为 ".btn{" 结尾的选择器会把它顶掉。
+   两列网格里的格子高度天然不等（右列 URL 带按钮更高），默认 stretch 会把「启用」
+   这种一行内容拉成高格子，align-items:start 让每格按自身高度落位。只读字段
+   （URL、模型名）是信息不是输入，用下沉底色加等宽字体退一格。 */
+.cursor-form{align-items:start}
+/* 启用：label 与开关贴在一起（原来 space-between 把两者拉到整格两端），开关放大一档，
+   点击给一瞬的扩散环。尺寸按 40×22 重算，滑块位移 = 内宽 38 - 18 - 左右各 1。 */
+.cursor-form .f.cursor-switch{flex-direction:row;align-items:center;align-self:end;justify-content:flex-start;gap:11px}
+.cursor-form .sw2 i{width:40px;height:22px}
+.cursor-form .sw2 i::after{width:18px;height:18px}
+.cursor-form .sw2.on i::after{transform:translateX(18px)}
+.cursor-form .sw2 i::before{content:"";position:absolute;inset:-4px;border-radius:var(--r-pill);
+  background:var(--accent);opacity:0;pointer-events:none}
+.cursor-form .sw2.pulse i::before{animation:swPulse .42s cubic-bezier(.16,1,.3,1)}
+@keyframes swPulse{0%{opacity:.16;transform:scale(.9)}100%{opacity:0;transform:scale(1.5)}}
+/* 减弱动效时换成纯淡出：反馈还在，只是不再扩散 */
+@keyframes swPulseFade{0%{opacity:.16}100%{opacity:0}}
+@media (prefers-reduced-motion:reduce){
+  .cursor-form .sw2.pulse i::before{animation-name:swPulseFade;animation-duration:.3s}}
+.cursor-form .f > .btn{align-self:flex-start;width:auto}
+.cursor-form .row{display:flex;gap:8px;align-items:center;min-width:0}
+.cursor-form .row input{flex:1;min-width:0}
+.cursor-form .f input[readonly]{background:var(--sunken);font-family:var(--mono);font-size:12.5px}
+
+/* 使用教学入口：钉在窗口右下角。挂在 body 上用 fixed（同 #toasts 的做法）——
+   页面容器 .view 自带滚动，放进容器里的浮动元素会跟着内容走；sticky 在内容不足一屏时
+   又会停在流位置够不到底部。面板非模态：不遮罩、不抢焦点，点外部或 Esc 收起，
+   从按钮右下角展开（transform-origin），符合"从触发处生长"的空间一致性。 */
+.cursor-help{position:fixed;right:22px;bottom:16px;z-index:45}
+.cursor-help .help-wrap{position:relative}
+.cursor-help .help-panel{position:absolute;right:0;bottom:calc(100% + 10px);
+  width:min(400px,calc(100vw - 48px));padding:16px 18px 17px;
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);
+  box-shadow:var(--pop);transform-origin:bottom right;
+  animation:helpIn .16s cubic-bezier(.16,1,.3,1) both}
+@keyframes helpIn{from{opacity:0;transform:scale(.97) translateY(4px)}to{opacity:1;transform:none}}
+.cursor-help .help-note{margin:0;font-size:13px;line-height:1.7;color:var(--fg2)}
+.cursor-help .help-note + .help-note{margin-top:8px}
+.cursor-help .help-note + .btn{margin-top:13px}
+/* 面板是位移+缩放，换成淡入淡出；不动效就不动，别留半截位移 */
+@media (prefers-reduced-motion:reduce){.cursor-help .help-panel{animation:none}}
+
 .usage-page{color:var(--fg);font-family:var(--sans)}
 
 /* 顶部工具条 */
