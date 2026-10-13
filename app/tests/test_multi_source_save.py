@@ -85,6 +85,10 @@ class StubGateway:
         self.calls.append((method, path))
         if path == '/v0/management/config' and method == 'GET':
             return copy.deepcopy(self.config)
+        if path == '/v0/management/oauth-model-alias' and method == 'GET':
+            return {'oauth-model-alias': None}
+        if path == '/v0/management/oauth-model-alias' and method == 'PUT':
+            return {'status': 'ok'}
         if path == '/v1/models':
             return {'data': [{'id': i} for i in self.models]}
         if method == 'PUT' and path.startswith('/v0/management/'):

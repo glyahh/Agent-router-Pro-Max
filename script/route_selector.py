@@ -668,6 +668,11 @@ def apply_selection(data):
         live_agents=_live_head_agents() if isinstance(plan.get('agent_heads'), dict) else None
         new=build_config(old,plan,data.get('selected',{}),live_agents)
         changed=[s for s in SECTIONS if old.get(s,[])!=new.get(s,[])]
+        # 官方登录来源的渠道头不在 codex-api-key 里。别名没变也要能单独落盘，
+        # 否则只改了 sb 这个头时会走下面的早退，目录继续停在旧渠道头。
+        alias_before=_oauth_alias_current()
+        alias_desired=oauth_codex_aliases(plan, data.get('selected') or {}, live_agents)
+        alias_changed=_oauth_alias_norm(alias_before)!=_oauth_alias_norm(alias_desired)
         auth_before={};auth_changes={}
         for p in plan['providers']:
             if p['section']!='auth-file':continue
@@ -692,7 +697,7 @@ def apply_selection(data):
             else:
                 desired=auth_excluded(enabled,p.get('expose'))
             if auth_before[pid]!=desired:auth_changes[pid]=desired
-        if not changed and not auth_changes:
+        if not changed and not auth_changes and not alias_changed:
             if plan!=old_plan:
                 clean=clean_plan(plan)
                 write_json(ROOT/'routing-plan.json',clean)
@@ -714,6 +719,10 @@ def apply_selection(data):
                 api('/v0/management/'+section,'PUT',new[section])
             for pid,desired in auth_changes.items():
                 patch_auth_models(desired); attempted.append('auth:'+pid)
+            if alias_changed:
+                # 排除项先落，再挂别名：被排除的模型挂不上渠道头。
+                attempted.append('oauth-alias')
+                api('/v0/management/oauth-model-alias','PUT',_oauth_alias_body(alias_desired))
             # 期望的运行时模型 ID 必须用**客户端可见 ID**（带渠道头）。用干净别名去
             # wait_models 会永远等不到，报"配置已保存，但运行时模型目录尚未匹配"，
             # 而配置其实已经正确写进去了 —— 一个纯粹由这里口径不一致造成的假失败。
@@ -729,6 +738,10 @@ def apply_selection(data):
         except Exception:
             restored=True
             for section in reversed(attempted):
+                if section=='oauth-alias':
+                    try:api('/v0/management/oauth-model-alias','PUT',_oauth_alias_body(alias_before))
+                    except Exception:restored=False
+                    continue
                 if section.startswith('auth:'):continue
                 try:
                     api('/v0/management/'+section,'PUT',old[section])
@@ -832,15 +845,79 @@ def auth_current():
 def patch_auth_models(excluded):
     api('/v0/management/auth-files/fields','PATCH',{'name':AUTH_FILE,'excluded_models':excluded})
 
+def _oauth_alias_norm(raw):
+    """比较用的别名指纹。fork 缺省就是 false，管理接口读回来时不会带这个字段。"""
+    rows=[]
+    if isinstance(raw, dict):
+        for channel, items in raw.items():
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                name=str(item.get('name') or '').strip()
+                alias=str(item.get('alias') or '').strip()
+                if name and alias:
+                    rows.append((str(channel), name, alias, bool(item.get('fork'))))
+    return tuple(sorted(rows))
+
+def _oauth_alias_current():
+    data=api('/v0/management/oauth-model-alias')
+    raw=data.get('oauth-model-alias') if isinstance(data, dict) else None
+    return raw if isinstance(raw, dict) else {}
+
+def _oauth_alias_body(desired):
+    # 空表要写成 codex: []。管理接口收到空列表会收成 null，裸 ID 恢复。
+    return desired if desired else {'codex': []}
+
+def oauth_codex_aliases(plan, selected, live_agents):
+    """官方登录来源的渠道头。
+
+    auth-file 没有 models 别名。不写 oauth-model-alias 的话，sb/gpt-6.1-sol
+    永远不会出现在 /v1/models，保存会在 wait_models 等满后回滚，Codex 目录也不会更新。
+    这个来源没有空头时 fork 为 false：用渠道头换掉裸 ID，把干净名字留给主来源。
+    """
+    codex=[]
+    seen=set()
+    for p in plan.get('providers') or []:
+        if not isinstance(p, dict) or p.get('section')!='auth-file':
+            continue
+        if p.get('id') not in _selected_ids(selected, p.get('group')):
+            continue
+        heads=_gateway_heads(plan, p, live_agents)
+        nonempty=[h for h in heads if h]
+        keep_bare=('' in heads) or not nonempty
+        avail=None
+        if isinstance(p.get('available'), list):
+            avail={m.get('alias') for m in p['available'] if isinstance(m, dict)}
+        for alias in p.get('expose') or []:
+            if not codex_usable(alias):
+                continue
+            if avail is not None and alias not in avail:
+                continue
+            for index, head in enumerate(nonempty):
+                client=_client_id(head, alias)
+                if client in seen:
+                    continue
+                seen.add(client)
+                # 第一条替换裸 ID；还有别的头，或这个来源同时是主，就再挂一份。
+                row={'name': alias, 'alias': client}
+                if keep_bare or index>0:
+                    row['fork']=True
+                codex.append(row)
+    return {'codex': codex} if codex else {}
+
 def regen_catalog(plan):
     # picked 的键是**客户端可见 ID**（srapi/gpt-5.6-sol），值里额外带上干净别名 clean——
     # 因为官方 meta 与模板池都是按**上游模型名**索引的，拿带头的 ID 去查会全部落空，
     # 表现是"有头的模型丢掉官方元数据、档位和上下文窗口"，不报错，很难发现。
     picked={}
+    # 有行级选择时只写已启用的来源。停用的来源留在目录里的话，Codex 仍会列出它，
+    # 和界面上勾选的两家对不上。没有 selected 的旧调用保持原样，测试不用改。
+    _sel=plan.get('selected') if isinstance(plan.get('selected'), dict) else None
     for p in plan['providers']:
-        # Codex reads this catalog only at startup. Keep every explicitly exposed
-        # model here, even if its provider is not the current selection, so a
-        # later provider switch never requires a Codex restart just to see it.
+        if _sel is not None and p.get('id') not in _selected_ids(_sel, p.get('group')):
+            continue
         head=_effective_head(plan,'codex',p);label=p.get('label') or p.get('id')
         for alias in p.get('expose',[]):
             if not codex_usable(alias):continue
