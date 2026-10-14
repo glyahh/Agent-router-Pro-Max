@@ -79,6 +79,15 @@ class StubGateway:
                     a = m.get('alias')
                     if a and a not in ids:
                         ids.append(a)
+        # 模拟网关丢掉某个已配置别名，直到保存路径把它改成临时 ID 再改回。
+        hidden = getattr(self, 'hide_until_rebind', None)
+        if hidden:
+            if any(str(a).startswith('prism-rebind/') for a in ids):
+                self.saw_rebind = True
+            elif getattr(self, 'saw_rebind', False):
+                self.hide_until_rebind = None
+            if self.hide_until_rebind:
+                ids = [a for a in ids if a not in hidden and not str(a).startswith('prism-rebind/')]
         self.models = ids
 
     def api(self, path, method='GET', data=None):
@@ -454,6 +463,37 @@ try:
     disk_settled = json.loads((TMP / 'routing-plan.json').read_text(encoding='utf-8'))
     check('早返回分支也把 selection 落盘', disk_settled.get('selected'),
           {'gpt': [], 'deepseek': [], 'glm': ['goat-glm']})
+
+    print('== 网关丢掉已写入的裸别名：保存会重新登记，而不是整单回滚 ==')
+    sol = 'gpt-6.1-sol'
+    rebind_plan = {'note': 'stub', 'providers': [
+        {'id': 'srapi', 'label': 'SRAPI', 'group': 'gpt', 'section': 'codex-api-key',
+         'base_url': 'https://b.example/v1', 'tag': 't-b', 'head': '',
+         'models': [{'name': sol, 'alias': sol}], 'blocked': None, 'expose': [sol]},
+    ], 'agent_heads': {'codex': {'srapi': ''}}}
+    (TMP / 'routing-plan.json').write_text(json.dumps(rebind_plan, ensure_ascii=False, indent=2),
+                                           encoding='utf-8')
+    rebind_cfg = {'codex-api-key': [
+        {'api-key': 'k-b', 'base-url': 'https://b.example/v1',
+         'headers': {'X-Route-Tag': 't-b'}, 'request-retry': 0,
+         'models': [{'name': 'GPT-6.1 Sol', 'alias': sol}]},
+    ], 'openai-compatibility': []}
+    stub.config = copy.deepcopy(rebind_cfg)
+    stub.hide_until_rebind = {sol}
+    stub.saw_rebind = False
+    stub.rebuild()
+    rs.fetch_all = lambda p, c: {x['id']: {'available': [{'name': sol, 'alias': sol}],
+                                           'fetch_error': None,
+                                           'expose': list(x.get('expose') or [])}
+                                 for x in p['providers']}
+    res_rebind = bridge._apply_selection_locked({
+        'revision': rs.revision(stub.config),
+        'selected': {'gpt': ['srapi'], 'deepseek': [], 'glm': []},
+        'picks': {'srapi': [sol]},
+    })
+    check('重新登记后保存成功', isinstance(res_rebind, dict) and res_rebind.get('selected', {}).get('gpt'), ['srapi'])
+    check('正式别名回到网关', [m['alias'] for m in stub.config['codex-api-key'][0]['models']], [sol])
+    check('重新登记后模型列表含裸 ID', sol in stub.models, True)
 
 finally:
     rs.api, rs.fetch_all = real_api, real_fetch_all

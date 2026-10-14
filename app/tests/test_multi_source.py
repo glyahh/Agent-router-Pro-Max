@@ -308,6 +308,18 @@ try:
     check('第二次 regen 池子不增长', len(tpl2['models']), n_before)
     cat2 = json.loads((tmp / 'codex-model-catalog.json').read_text(encoding='utf-8'))
     check('第二次 regen 产出条数不变', len(cat2['models']), len(cat['models']))
+    check('没填窗口的 GPT 仍是 272000', by_slug['gpt-5.6-sol']['context_window'], 272000)
+
+    # 来源上填的窗口必须进目录。GPT 分支以前写死 272000，Codex 再乘 95% 就显示成 258k。
+    rplan['providers'][0]['context_window'] = 500000
+    rs.regen_catalog(rplan)
+    cat3 = json.loads((tmp / 'codex-model-catalog.json').read_text(encoding='utf-8'))
+    by3 = {m['slug']: m for m in cat3['models']}
+    check('来源填了 500000 时目录窗口就是 500000', by3['gpt-5.6-sol']['context_window'], 500000)
+    check('填写窗口的最大窗口同步', by3['gpt-5.6-sol']['max_context_window'], 500000)
+    check('填写窗口按 100% 显示，避免 95% 打成 475k',
+          by3['gpt-5.6-sol']['effective_context_window_percent'], 100)
+    check('没填窗口的另一条 GPT 仍是 272000', by3['srapi/brand-new-model']['context_window'], 272000)
 finally:
     shutil.rmtree(tmp, ignore_errors=True)
     print('  沙箱已删除: %s' % tmp)

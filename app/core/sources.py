@@ -3,7 +3,8 @@
 route_selector.py 只管读 plan、切换路由，没有"新增来源"的能力，这块补在这里。
 本模块的命门是**写入顺序**：
 
-    新增/修改：① 写 config.yaml 的条目 → ② 写 routing-plan.json 的行
+    新增/修改自定义来源：① 写 config.yaml 的条目 → ② 写 routing-plan.json 的行
+    修改官方登录来源：只写 routing-plan.json，不改登录文件和网关配置
     删除（三步）：① 停用 config 条目 → ② 删 plan 行 → ③ 删 config 条目
 
 新增时若反过来先写 plan，find_entry() 在 config 里找不到条目会抛
@@ -639,7 +640,7 @@ def _unique_id(label, plan, keep=None):
 # ---------------------------------------------------------------- 表单 → 文件
 
 
-def _clean_spec(spec, creating, groups=None):
+def _clean_spec(spec, creating, groups=None, require_endpoint=True):
     if not isinstance(spec, dict):
         raise RouteError('来源参数格式无效')
     label = str(spec.get('label') or '').strip()
@@ -655,11 +656,13 @@ def _clean_spec(spec, creating, groups=None):
     if not isinstance(group, str) or group not in groups:
         raise RouteError('分组不存在，先创建分组')
     base_url = str(spec.get('base_url') or '').strip().rstrip('/')
-    if not re.match(r'^https?://[^\s/]+', base_url):
-        raise RouteError('端点要写成完整的 http(s) 地址，例如 https://api.example.com/v1')
     api_key = str(spec.get('api_key') or '').strip()
-    if creating and not api_key:
-        raise RouteError('API 密钥不能为空')
+    # 官方登录的端点是 auth://，没有可替换的密钥。那条路径跳过这两项。
+    if require_endpoint:
+        if not re.match(r'^https?://[^\s/]+', base_url):
+            raise RouteError('端点要写成完整的 http(s) 地址，例如 https://api.example.com/v1')
+        if creating and not api_key:
+            raise RouteError('API 密钥不能为空')
     # 渠道头可空（空 = 该分组的无头主来源，模型保留干净 ID）。给了就必须合法。
     head = str(spec.get('head') or '').strip()
     if head and not HEAD_RE.match(head):
@@ -752,6 +755,32 @@ def _row_from(clean, pid, tag, existing=None):
     return row
 
 
+def _auth_row_from(clean, existing):
+    """官方登录行只改计划里的显示项。id、section、端点保持原样，不能改写成密钥来源。"""
+    row = copy.deepcopy(existing) if isinstance(existing, dict) else {}
+    row['id'] = existing.get('id')
+    row['section'] = 'auth-file'
+    row['base_url'] = existing.get('base_url')
+    row['label'] = clean['label']
+    row['group'] = clean['group']
+    row['head'] = clean['head']
+    row['models'] = [dict(m) for m in clean['models']]
+    row['model_settings'] = copy.deepcopy(clean['model_settings'])
+    # 删掉的模型不再暴露。还在名单里的别名保持原来的勾选，新模型不自动暴露。
+    aliases = {m['alias'] for m in clean['models']}
+    expose = existing.get('expose') if isinstance(existing.get('expose'), list) else []
+    row['expose'] = [a for a in expose if isinstance(a, str) and a in aliases]
+    row.pop('available', None)
+    row.pop('fetch_error', None)
+    if 'custom' in row:
+        row['custom'] = False
+    if clean['context_window'] is None:
+        row.pop('context_window', None)
+    else:
+        row['context_window'] = clean['context_window']
+    return row
+
+
 # ---------------------------------------------------------------- 对外视图
 
 
@@ -829,7 +858,8 @@ def _view(row, owners=None):
 
 def list_sources():
     """从 routing-plan.json 读来源。剥离 available / fetch_error（live 数据不在
-    这里给），custom 的标 editable —— 界面只让自定义来源可编辑可删。"""
+    这里给），custom 的标 editable。官方登录（auth-file）在界面上也能编辑，
+    但 editable 仍按 custom 给：删除入口看的是 section，不看这个标志。"""
     plan = _read_plan()
     owners = resolve_model_settings(plan)
     return [_view(p, owners) for p in plan['providers']]
@@ -981,7 +1011,40 @@ def create_source(spec):
         return _sync_reasoning(_view(row, resolve_model_settings(plan)))
 
 
+def _update_auth_source(source_id, spec):
+    """编辑官方登录来源。只写 plan 的名称、分组、渠道头、模型和推理档位。
+
+    端点和密钥即使出现在请求里也忽略。登录文件和网关配置都不写。
+    """
+    clean = _clean_spec(spec, creating=False, require_endpoint=False)
+    if not clean['models']:
+        raise RouteError('至少填一个模型 ID')
+    with _Transaction():
+        config = _gw_get('config')
+        plan = _read_plan()
+        row = next((p for p in plan['providers'] if p.get('id') == source_id), None)
+        if row is None:
+            raise RouteError('找不到来源：' + str(source_id))
+        if row.get('section') != 'auth-file':
+            raise RouteError('来源类型已变化，请重试')
+        new_row = _auth_row_from(clean, row)
+        _assert_heads_ok([new_row if p.get('id') == source_id else p
+                          for p in plan['providers']],
+                         _enabled_ids(config, plan), _heads_arg(plan))
+        _backup('source-edit', names=('routing-plan.json',))
+        plan['providers'] = [new_row if p.get('id') == source_id else p
+                             for p in plan['providers']]
+        _write_plan(plan)
+        return _sync_reasoning(_view(new_row, resolve_model_settings(plan)))
+
+
 def update_source(source_id, spec):
+    plan = _read_plan()
+    current = next((p for p in plan.get('providers') or []
+                    if isinstance(p, dict) and p.get('id') == source_id), None)
+    # 官方登录不走密钥来源的保存。先分出去，避免 auth:// 被端点校验拒绝。
+    if current is not None and current.get('section') == 'auth-file':
+        return _update_auth_source(source_id, spec)
     clean = _clean_spec(spec, creating=False)
     with _Transaction():
         config = _gw_get('config')
@@ -989,6 +1052,8 @@ def update_source(source_id, spec):
         row = next((p for p in plan['providers'] if p.get('id') == source_id), None)
         if row is None:
             raise RouteError('找不到来源：' + str(source_id))
+        if row.get('section') == 'auth-file':
+            raise RouteError('来源类型已变化，请重试')
         if not row.get('custom'):
             raise RouteError('内置来源不可编辑；要自建请用"新增来源"另存一份')
         section = row.get('section')

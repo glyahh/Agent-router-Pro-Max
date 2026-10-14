@@ -22,6 +22,7 @@ CASES = [
     ('保存路由端到端', 'test_multi_source_save.py'),
     ('分组名单（首启 / 只读补全 / 改名 / 拒绝删除）', 'test_groups.py'),
     ('删除来源（内置 / 共享凭据 / auth-file 例外）', 'test_source_delete.py'),
+    ('官方登录来源编辑', 'test_official_edit.py'),
     ('Agent 适配器（含 Copilot 与网关停止）', 'test_agents.py'),
     ('加固（重定向 / 预检闸门 / auth 补偿）', 'test_hardening.py'),
     ('HTTP 层（安全闸 / body 纪律 / 错误映射）', 'test_server_http.py'),

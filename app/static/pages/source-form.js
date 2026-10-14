@@ -27,7 +27,8 @@
     '  padding:10px 13px;margin-bottom:14px;background:var(--panel)}',
     '.srcform .msg .txt{flex:1;min-width:0}',
     '.srcform .msg.warn{border-left-color:var(--warn);color:var(--warn);background:var(--warnbg)}',
-    '.srcform .msg.bad{border-left-color:var(--bad);color:var(--bad);background:var(--badbg)}'
+    '.srcform .msg.bad{border-left-color:var(--bad);color:var(--bad);background:var(--badbg)}',
+    '.srcform input:disabled{color:var(--fg3);background:var(--bg);cursor:default}'
   ].join('\n');
 
   function injectStyle() {
@@ -87,7 +88,7 @@
       box.appendChild(h('div', { class: 'formh' },
         h('span', { class: 't', text: isCreate ? '+ 添加来源' : '编辑来源 · ' + f.id }),
         h('span', { class: 'hr' }),
-        h('span', { class: 'tag', text: isCreate ? 'ID 自动生成' : '自定义来源' })));
+        h('span', { class: 'tag', text: isCreate ? 'ID 自动生成' : (f.official ? '官方登录' : '自定义来源') })));
       if (f.err) box.appendChild(h('div', { class: 'msg warn' }, h('span', { class: 'txt', text: f.err })));
 
       var groupSel = h('select', null, gs.map(function (g) { return option(g.id, g.name || g.id); }));
@@ -98,10 +99,13 @@
       labelIn.addEventListener('input', function () { f.label = labelIn.value; });
       var headIn = h('input', { value: f.head, placeholder: '留空 = 该分组的主来源' });
       headIn.addEventListener('input', function () { f.head = headIn.value.trim(); });
-      var urlIn = h('input', { value: f.base_url, placeholder: 'https://example.com/v1' });
+      // 官方登录的端点和密钥属于登录凭据，表单里只展示、不能改。
+      var urlIn = h('input', { value: f.base_url, placeholder: 'https://example.com/v1',
+        disabled: !!f.official });
       urlIn.addEventListener('input', function () { f.base_url = urlIn.value.trim(); });
       var keyIn = h('input', { type: 'password', value: f.api_key,
-        placeholder: isCreate ? 'sk-…' : '留空表示不修改密钥' });
+        placeholder: f.official ? '' : (isCreate ? 'sk-…' : '留空表示不修改密钥'),
+        disabled: !!f.official });
       keyIn.addEventListener('input', function () { f.api_key = keyIn.value.trim(); });
       var dirIn = h('textarea', { rows: 3, placeholder: '点「拉取」从服务商获取，或按行手填，每行一个模型 ID' });
       dirIn.value = f.dirText;
@@ -320,9 +324,14 @@
       if (spec.head && !HEAD_RE.test(spec.head)) {
         return { err: '渠道头不合法：只能用 24 个字符以内的小写字母、数字、点、下划线、连字符。' };
       }
-      if (!spec.base_url) return { err: '端点不能为空。' };
-      if (f.mode === 'create' && !f.api_key) return { err: '新增来源必须填 API 密钥。' };
-      if (f.api_key) spec.api_key = f.api_key;
+      if (f.official) {
+        // 密钥不提交。端点原样带上，后端按来源 id 认官方行，不采用这项。
+        spec.base_url = f.base_url || '';
+      } else {
+        if (!spec.base_url) return { err: '端点不能为空。' };
+        if (f.mode === 'create' && !f.api_key) return { err: '新增来源必须填 API 密钥。' };
+        if (f.api_key) spec.api_key = f.api_key;
+      }
       var seen = {}, ms = {}, cws = [], bad = null;
       f.models.forEach(function (m) {
         var alias = (m.alias || '').trim();
@@ -395,6 +404,7 @@
       });
       form = { mode: 'edit', id: source.id, label: source.label || '', group: source.group || '',
         head: source.head || '', base_url: source.base_url || '', api_key: '', dirText: '',
+        official: source.section === 'auth-file',
         models: models.length ? models : [blankModel()], pulled: null, err: null };
       render();
     }

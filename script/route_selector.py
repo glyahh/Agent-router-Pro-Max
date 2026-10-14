@@ -602,11 +602,55 @@ def build_config(config, plan, selected, live_agents=None):
             else:entry['disabled']=True
     return new
 
+def _enabled_codex_aliases(section):
+    """已启用的 Codex 密钥条目正在发布的客户端模型 ID。"""
+    found=set()
+    for entry in section or []:
+        if not isinstance(entry, dict) or '*' in (entry.get('excluded-models') or []):
+            continue
+        for model in entry.get('models') or []:
+            if isinstance(model, dict):
+                alias=str(model.get('alias') or '').strip()
+                if alias:
+                    found.add(alias)
+    return found
+
+def _rebind_codex_aliases(section, missing):
+    """网关有时记住了别名，却不把它放进 /v1/models。
+
+    模型 ID 集合没变时，热重载不会重新登记。先把缺的别名改成临时 ID 再改回，
+    强制网关删掉旧登记再挂上。改回失败时再写一次正式列表，避免临时 ID 留在网关里。
+    """
+    temp=copy.deepcopy(section)
+    touched=False
+    for entry in temp:
+        if not isinstance(entry, dict) or '*' in (entry.get('excluded-models') or []):
+            continue
+        for model in entry.get('models') or []:
+            if not isinstance(model, dict):
+                continue
+            alias=str(model.get('alias') or '').strip()
+            if alias in missing:
+                # 临时 ID 只活到下一次 PUT，客户端不会拿它发起请求。
+                model['alias']='prism-rebind/'+alias
+                touched=True
+    if not touched:
+        return False
+    api('/v0/management/codex-api-key','PUT',temp)
+    try:
+        api('/v0/management/codex-api-key','PUT',section)
+    except Exception:
+        try:api('/v0/management/codex-api-key','PUT',section)
+        except Exception:pass
+        raise
+    return True
+
 def wait_models(expected):
     # ponytail: subset check; management GET normalizes lists, exact equality false-alarms.
     for _ in range(40):
         actual={v['id'] for v in api('/v1/models').get('data',[])}
-        if expected<=actual:return
+        missing=set(expected)-actual
+        if not missing:return
         time.sleep(.15)
     raise RouteError('配置已保存，但运行时模型目录尚未匹配')
 
@@ -734,6 +778,13 @@ def apply_selection(data):
             expected|={m['alias'] for p in plan['providers']
                        if p['id'] in _selected_ids(data.get('selected'),p['group'])
                        for m in legacy_models(p)}
+            # 缺的如果全是刚写进已启用密钥条目的别名，先重新登记再等。
+            # 官方渠道头把裸 ID 换成 sb/... 之后，中转站那条同名别名可能还留在配置里，
+            # 但网关的模型表已经把它丢掉了；不重新登记的话，保存会等满后整单回滚。
+            codex_aliases=_enabled_codex_aliases(new.get('codex-api-key'))
+            preview=set(expected)-{v['id'] for v in api('/v1/models').get('data',[])}
+            if preview and preview<=codex_aliases:
+                _rebind_codex_aliases(new.get('codex-api-key'), preview)
             wait_models(expected)
         except Exception:
             restored=True
@@ -907,6 +958,32 @@ def oauth_codex_aliases(plan, selected, live_agents):
                 codex.append(row)
     return {'codex': codex} if codex else {}
 
+def _positive_window(value):
+    """来源或上游给出的正整数窗口。布尔值不算。"""
+    if isinstance(value, bool) or not isinstance(value, int) or value<=0:
+        return None
+    return value
+
+def _apply_catalog_window(entry, group, upstream_size, explicit):
+    """目录窗口。来源填了就用填写值，并让 Codex 的「共 N」等于这个数。
+
+    GPT 没填时仍固定 272000：官方广告窗口最大能到 872000，不能当默认账单窗口。
+    """
+    window=_positive_window(explicit)
+    if window is not None:
+        entry['context_window']=entry['max_context_window']=window
+        entry['auto_compact_token_limit']=int(window*0.9)
+        # 95% 会把用户填的 500000 显示成 475k。填了就按 100%，「共」才是填写值。
+        entry['effective_context_window_percent']=100
+    elif group=='gpt':
+        entry['context_window']=entry['max_context_window']=272000
+        entry['auto_compact_token_limit']=230000
+    else:
+        size=_positive_window(upstream_size)
+        if size is not None:
+            entry['context_window']=entry['max_context_window']=size
+            entry['auto_compact_token_limit']=int(size*0.9)
+
 def regen_catalog(plan):
     # picked 的键是**客户端可见 ID**（srapi/gpt-5.6-sol），值里额外带上干净别名 clean——
     # 因为官方 meta 与模板池都是按**上游模型名**索引的，拿带头的 ID 去查会全部落空，
@@ -923,14 +1000,19 @@ def regen_catalog(plan):
             if not codex_usable(alias):continue
             live=next((m for m in p.get('available',[]) if m.get('alias')==alias),None)
             size=live.get('context_length') if live else None
+            # 来源表单上的上下文窗口。上游 context_length 不能顶掉用户填的数。
+            explicit=_positive_window(p.get('context_window'))
             cid=_client_id(head,alias)
-            previous=picked.get(cid,(p['group'],None))[1]
+            prev=picked.get(cid)
+            previous=prev[1] if prev else None
+            prev_explicit=prev[5] if prev and len(prev)>5 else None
             # Missing metadata from an earlier relay must not hide a later explicit window.
             sizes=[n for n in (previous,size) if isinstance(n,int) and not isinstance(n,bool) and n>0]
-            picked[cid]=(p['group'],min(sizes) if sizes else None,head,label,alias)
+            explicit_vals=[n for n in (prev_explicit,explicit) if n]
+            picked[cid]=(p['group'],min(sizes) if sizes else None,head,label,alias,min(explicit_vals) if explicit_vals else None)
         # 遗留 A/ 别名不加头（老任务钉死的 ID），键就是它自己，clean 也是它自己。
         for m in legacy_models(p):
-            picked.setdefault(m['alias'],(p['group'],None,'',label,m['alias']))
+            picked.setdefault(m['alias'],(p['group'],None,'',label,m['alias'],_positive_window(p.get('context_window'))))
     # Template pool is stable; the live catalog shrinks to the picked set, so it cannot seed itself.
     pool=ROOT/'codex-model-catalog-templates.json'
     if not pool.exists():pool=ROOT/'codex-model-catalog.json'
@@ -944,7 +1026,7 @@ def regen_catalog(plan):
     # widest ladder in the pool for entries with none, not merely the first: the narrowest would drop
     # max/ultra and quietly take away depths the client already uses.
     donor_levels=max((m['supported_reasoning_levels'] for m in entries if m.get('supported_reasoning_levels')),key=len,default=None)
-    for alias,(group,size,head,label,clean) in sorted(picked.items()):
+    for alias,(group,size,head,label,clean,explicit) in sorted(picked.items()):
         if not meta_err and clean in meta:
             om=meta[clean]
             e=next((copy.deepcopy(m) for m in entries if m['slug']==clean),None) or {}
@@ -972,13 +1054,9 @@ def regen_catalog(plan):
                 e['supported_reasoning_levels']=copy.deepcopy(donor_levels) if donor_levels else []
                 names=[l['effort'] for l in e['supported_reasoning_levels']]
                 e['default_reasoning_level']='max' if 'max' in names else (names[0] if names else None)
-            # Established sizing policy for relays; official numbers (max 872000) are not bill-safe here.
-            if group=='gpt':
-                e['context_window']=e['max_context_window']=272000;e['auto_compact_token_limit']=230000
-            elif isinstance(size,int) and size>0:
-                e['context_window']=e['max_context_window']=size
-                e['auto_compact_token_limit']=int(size*0.9)
+            # 没填窗口时，GPT 仍用 272000。官方广告窗口最大 872000，不能当默认账单窗口。
             e['effective_context_window_percent']=95
+            _apply_catalog_window(e,group,size,explicit)
             # 只有遗留 A/ 别名隐藏。带渠道头的模型必须可见，否则需求 5"在模型列表里区分"
             # 就白做了——这一行最容易顺手改错。
             e['visibility']='hide' if alias.startswith('A/') else 'list'
@@ -994,13 +1072,6 @@ def regen_catalog(plan):
             seed['service_tiers']=[];seed['additional_speed_tiers']=[]
             added.append(seed)
             e=copy.deepcopy(seed)          # 输出用副本，下面还要把 slug 改成客户端 ID
-        if group=='gpt':
-            e['context_window']=e['max_context_window']=272000;e['auto_compact_token_limit']=230000
-        else:
-            # Non-GPT: use the upstream-advertised window verbatim, else keep whatever the entry already had.
-            if isinstance(size,int) and size>0:
-                e['context_window']=e['max_context_window']=size
-                e['auto_compact_token_limit']=int(size*0.9)
         if not e.get('supported_reasoning_levels') and donor_levels:
             e['supported_reasoning_levels']=copy.deepcopy(donor_levels)
             names=[l['effort'] for l in e['supported_reasoning_levels']]
@@ -1009,6 +1080,8 @@ def regen_catalog(plan):
         e['slug']=alias
         if head:e['display_name']=label+' · '+clean
         e['effective_context_window_percent']=95
+        # 模板分支同样吃来源窗口。没填的 GPT 在这里回到 272000。
+        _apply_catalog_window(e,group,size,explicit)
         e['visibility']='hide' if alias.startswith('A/') else 'list'
         out.append(e)
     b=backup('catalog-regen')

@@ -148,7 +148,8 @@
     }
     items.forEach(function (p) {
       var acts = [];
-      if (isCustom(p)) {
+      // 自定义来源和官方登录都能编辑。官方行仍不给删除：删了没有界面入口重建。
+      if (isCustom(p) || p.section === 'auth-file') {
         acts.push(h('button', { class: 'btn sm', type: 'button', disabled: !!S.busy,
           onclick: function () { editSource(p); } }, '编辑'));
       }

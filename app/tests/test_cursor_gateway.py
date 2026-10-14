@@ -121,6 +121,18 @@ with tempfile.TemporaryDirectory(prefix='prism-cursor-test-') as temporary:
                 bridge.gateway_get('config'); break
             except bridge.RouteError:
                 time.sleep(.1)
+        # CLIProxyAPI 的 codex 请求管线要经过一次管理接口写入 config.yaml 之后，才会把
+        # 客户端的 reasoning_effort 翻成 reasoning；写什么无所谓，原样 PUT 同一份也会触发。
+        # 生产里配置早被写过无数次，所以先把这一步做掉再取基线，否则网关的重载时序会被
+        # 误判成 Cursor 规则外泄。等真正翻过来为止，避免取到中间的半加载状态。
+        warmup = {'model': 'codex/gpt-6.1-sol', 'messages': [{'role': 'user', 'content': 'warmup'}],
+                  'reasoning_effort': 'medium', 'prompt_cache_key': 'warmup-key'}
+        bridge.gateway_put_yaml((root / 'config.yaml').read_bytes())
+        for _ in range(40):
+            assert call(port, '/v1/chat/completions', warmup, 'local-test')[0] == 200
+            if seen[-1][1].get('reasoning'):
+                break
+            time.sleep(.25)
         original_text = (root / 'config.yaml').read_text()
         ordinary = {'model': 'codex/gpt-6.1-sol', 'messages': [{'role': 'user', 'content': 'ordinary'}],
                     'reasoning_effort': 'medium', 'prompt_cache_key': 'ordinary-cache-key'}
@@ -191,6 +203,14 @@ with tempfile.TemporaryDirectory(prefix='prism-cursor-test-') as temporary:
         # 普通请求的等级仍由原网关决定，不匹配 Cursor 规则。
         status, raw = call(port, '/v1/chat/completions', ordinary, 'local-test')
         assert status == 200 and seen[-1][1] == baseline, seen[-1][1]
+        # Cursor 的等级规则按请求头命中；不带该头的普通请求，等级只能来自它自己发来的
+        # reasoning_effort。用两个只差这一字段的请求互证：规则一旦外泄，两者会被钉成同一个值。
+        levels = {}
+        for asked in ('low', 'xhigh'):
+            probe = dict(ordinary, reasoning_effort=asked)
+            assert call(port, '/v1/chat/completions', probe, 'local-test')[0] == 200
+            levels[asked] = seen[-1][1].get('reasoning', {}).get('effort')
+        assert levels == {'low': 'low', 'xhigh': 'xhigh'}, levels
         from core import sources
         parsed = bridge.gateway_get('config')
         rebuilt = bridge.rs.build_config(parsed, {'providers': [dict(p, available=[{

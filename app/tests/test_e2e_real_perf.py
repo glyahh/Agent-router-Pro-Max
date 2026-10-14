@@ -8,6 +8,7 @@ import os
 import time
 import subprocess
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 import urllib.request
@@ -31,11 +32,17 @@ class TestHomeE2EPerformance(unittest.TestCase):
             return orig_do_get(self)
         server.Handler.do_GET = tracking_do_get
 
-        # 启动真实后台 HTTP 控制台服务（带繁忙顺延与释放保护）
+        # 启动真实后台 HTTP 控制台服务（带繁忙顺延与释放保护）。
+        # 用 create_server 而不是 start_background：后者会顺手跑 _background_bootstrap
+        # 和采样、请求采集，那是拿生产 .runtime 干的——测试一跑就会拉起用户真实的 ngrok
+        # 隧道、改写 cursor-settings.json 的 revision，还会把网关用量队列里的记录截走。
+        # 这里只要一个能直出静态页面的服务，子系统必须一个都不启动。
         cls.httpd = None
         for p in range(18399, 18420):
             try:
-                cls.httpd = server.start_background(port=p, token=cls.token)
+                cls.httpd = server.create_server(port=p, token=cls.token)
+                threading.Thread(target=cls.httpd.serve_forever, kwargs={'poll_interval': 0.3},
+                                 name='prism-e2e', daemon=True).start()
                 cls.port = p
                 break
             except server.PortBusy:
