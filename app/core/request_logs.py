@@ -107,6 +107,15 @@ def collect_once():
         _error = ''
 
 
+def collect_safe():
+    """安全触发一次网关请求统计采集；供后台轮询与 /api/logs 按需刷新共用。"""
+    global _error
+    try:
+        collect_once()
+    except Exception:
+        _error = '请求统计暂不可用'
+
+
 def snapshot(limit=100):
     path = bridge.ROOT / 'request-history.db'
     if not path.is_file():
@@ -143,13 +152,9 @@ def start():
         _stop = threading.Event()
         stopping = _stop
         def run():
-            global _error
             while not stopping.is_set():
-                try:
-                    collect_once()
-                except Exception:
-                    _error = '请求统计暂不可用'
-                stopping.wait(3 if not _error else 30)
+                collect_safe()
+                stopping.wait(3 if not _error else 5)
         _worker = threading.Thread(target=run, name='prism-request-logs', daemon=True)
         _worker.start()
 

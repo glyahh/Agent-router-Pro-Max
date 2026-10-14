@@ -519,6 +519,8 @@ def history(days: int = 7) -> list[dict]:
         # plan 一坏整个 History 接口就 500）。
         log.warning("读不到来源标签，历史用入库时记录的名字：%s", exc)
 
+    # 首次启动或首轮采样尚未完成时表可能尚未建立，先幂等建表以免报错 no such table
+    init_db()
     sql = ("SELECT date, source_key, SUM(success) AS success, SUM(failed) AS failed,"
            " MAX(label) AS label FROM usage_history")
     params: list = []

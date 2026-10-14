@@ -27,8 +27,16 @@ PROBE = r"""
     for(let i=0;i<100&&!document.querySelector('#pm-request-details tbody tr');i++) await wait(50);
     const page=window.PrismPages.logs, text=()=>document.querySelector('#pm-request-details').textContent;
     check('模型映射与计量',text().includes('route/test-model')&&text().includes('A/test-model')&&text().includes('1.20 s')&&text().includes('0.20 s')&&text().includes('100.00'));
+    const timeCell=document.querySelector('#pm-request-details tbody tr td span');
+    check('时间列按完成时刻展示且保留起止提示',timeCell&&timeCell.textContent.endsWith(':34:57')&&timeCell.title.includes('开始：')&&timeCell.title.includes('完成：'));
     check('缺失计量和失败状态',text().includes('—')&&text().includes('503'));
     check('模型名按文本渲染',!document.querySelector('#pm-request-details img')&&text().includes('<img'));
+    const devBtn=document.querySelector('#pm-dev-logs-toggle'), devBody=document.querySelector('#pm-dev-logs-body');
+    check('专业开发者日志默认折叠',devBtn&&devBtn.textContent.includes('专业开发者日志')&&devBtn.getAttribute('aria-expanded')==='false'&&devBody&&devBody.hidden===true);
+    devBtn.click();
+    check('点击展开专业开发者日志',devBtn.getAttribute('aria-expanded')==='true'&&devBody.hidden===false&&document.querySelector('#pm-logview').textContent.includes('ordinary log'));
+    devBtn.click();
+    check('再次点击收起专业开发者日志',devBtn.getAttribute('aria-expanded')==='false'&&devBody.hidden===true);
     await fetch('/probe-many');await page.refresh();
     const wrap=document.querySelector('#pm-request-details .tw');wrap.scrollTop=100;
     await page.refresh();
@@ -42,6 +50,8 @@ PROBE = r"""
     input.value='not-found';input.dispatchEvent(new Event('input',{bubbles:true}));await wait(120);
     await page.refresh();
     check('日志空态刷新不丢焦点',document.activeElement===input&&document.querySelectorAll('#pm-request-details tbody tr').length===0);
+    const refreshBtn=document.querySelector('#pm-btn-refresh');refreshBtn.click();await wait(120);
+    check('空态手动刷新后按钮恢复可用',refreshBtn&&!refreshBtn.disabled);
     input.value='';input.dispatchEvent(new Event('input',{bubbles:true}));await wait(120);
     await fetch('/probe-error');await page.refresh();await page.refresh();
     check('采集错误只弹一次',document.querySelectorAll('#toasts .toast').length===1);

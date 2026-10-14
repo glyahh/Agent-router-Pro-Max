@@ -253,9 +253,22 @@ try:
                saved['api_key'].startswith('sk-prism-')
                and ('"%s"' % saved['api_key']) in cfg, saved['api_key'][:12] + '…')
     check_true('首启会创建完整运行目录结构', Path(_froot, 'auth').is_dir()
+               and Path(_froot, 'logs').is_dir()
                and Path(_froot, 'codex-model-catalog-templates.json').is_file())
+    check_true('首启配置默认开启请求统计与文件日志',
+               'usage-statistics-enabled: true' in cfg
+               and 'logging-to-file: true' in cfg
+               and 'logs-max-total-size-mb: 32' in cfg
+               and 'error-logs-max-files: 5' in cfg)
     check_true('上游来源段是空列表（不编造凭据）',
                'codex-api-key: []' in cfg and 'openai-compatibility: []' in cfg)
+    # 全新尚无 usage-history.db 时直接查 history() 应幂等建表并返回空数组，不抛 OperationalError
+    _orig_db = sampling.DB_PATH
+    try:
+        sampling.DB_PATH = Path(_froot, 'usage-history.db')
+        check('全新目录查采样历史：自动建表并返回空列表', sampling.history(7), [])
+    finally:
+        sampling.DB_PATH = _orig_db
     check('再跑一次幂等（一个字节不动）', bridge.ensure_first_run_files(), [])
 
     before_cfg = cfg

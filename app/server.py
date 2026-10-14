@@ -292,6 +292,11 @@ def start_background(port: int = DEFAULT_PORT, token: str | None = None) -> Excl
 
 def serve_forever(port: int = DEFAULT_PORT) -> None:
     _ensure_logging()
+    # 独立启动 server.py 时也执行首启文件引导，保证无 .runtime 目录时同样可用
+    try:
+        bridge.ensure_first_run_files()
+    except Exception:
+        log.exception('首启引导失败')
     _preload_static_cache()
     _prune_backups()
     httpd = create_server(port)
@@ -736,6 +741,8 @@ def tail_lines(path: Path, limit: int, max_bytes: int = MAX_TAIL_BYTES):
 
 
 def read_logs(limit: int) -> dict:
+    # 读取日志时先同步一次网关请求统计队列，确保手动点「刷新」立即拉到刚完成的请求
+    request_logs.collect_safe()
     lines, truncated = tail_lines(MAIN_LOG, limit)
     return dict(lines=lines, line_count=len(lines), truncated=truncated, **request_logs.snapshot())
 

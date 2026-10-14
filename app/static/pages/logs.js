@@ -184,6 +184,7 @@
     errorBusy: false,  // 错误日志删除进行中，避免连点再发一次
     logTruncated: false,  // 本轮 /api/logs 的正文被服务端截断过（响应头 X-Prism-Truncated / data.truncated）
     truncProbed: {},   // name:size → 已探过，避免每 3s 重复发请求
+    devOpen: false,    // 专业开发者日志默认收起，页面只先露出上方的请求明细表
   };
 
   /* ── 行解析与筛选 ───────────────────────────────────────────── */
@@ -247,11 +248,40 @@
       toolbar(),
       notes(),
       requestDetails(),
-      logView(),
+      devLogs(),
       footbar()
     ])));
-    r.appendChild(errorSection());
     if (atBottom) scrollLogToEnd();
+  }
+
+  // 下半区的网关原始日志与错误日志文件平时收在「专业开发者日志」抽屉里，需要排查底层问题时再展开
+  function devLogs() {
+    var body = h('div', {
+      class: 'dev-logs-body', id: 'pm-dev-logs-body', hidden: !S.devOpen
+    }, [
+      h('div', { id: 'pm-logview-slot' }, [logView()]),
+      errorSection()
+    ]);
+    var toggle = h('button', {
+      class: 'dev-logs-toggle', id: 'pm-dev-logs-toggle', type: 'button',
+      'aria-expanded': S.devOpen ? 'true' : 'false',
+      onclick: function () {
+        S.devOpen = !S.devOpen;
+        var wrap = document.getElementById('pm-dev-logs');
+        if (wrap) wrap.classList.toggle('open', S.devOpen);
+        toggle.setAttribute('aria-expanded', S.devOpen ? 'true' : 'false');
+        body.hidden = !S.devOpen;
+        if (S.devOpen && S.pinBottom) {
+          S.unreadCount = 0;
+          updateBadge();
+          scrollLogToEnd();
+        }
+      }
+    }, [
+      h('span', { class: 'dev-logs-chev' }),
+      h('span', { text: '专业开发者日志' })
+    ]);
+    return h('div', { class: 'dev-logs' + (S.devOpen ? ' open' : ''), id: 'pm-dev-logs' }, [toggle, body]);
   }
 
   var filterDebounceTimer = null;
@@ -262,9 +292,15 @@
       return !matcher || matcher.bad || matcher([r.requested_model, r.upstream_model, r.reasoning_level, r.request_id].join(' '));
     }).map(function (r) {
       function elapsed(v) { return typeof v === 'number' && isFinite(v) ? (v / 1000).toFixed(2) + ' s' : '—'; }
-      var date = new Date(r.timestamp);
+      // 网关在请求完成时才向 usage-queue 入队，但 timestamp 记的是请求发起时刻；
+      // 表格按完成顺序倒序排列，「时间」列展示完成时刻（发起时间 + 耗时），避免长推理刚完成却显示几分钟前的时间。
+      var start = new Date(r.timestamp);
+      var hasDur = typeof r.duration_ms === 'number' && isFinite(r.duration_ms) && r.duration_ms > 0;
+      var end = (!isNaN(start.getTime()) && hasDur) ? new Date(start.getTime() + r.duration_ms) : start;
+      var timeTip = isNaN(start.getTime()) ? (r.timestamp || null)
+        : (hasDur ? ('开始：' + clock(start) + '\n完成：' + clock(end) + '\n' + r.timestamp) : r.timestamp);
       return [
-        h('span', {text: isNaN(date.getTime()) ? '—' : clock(date), title: r.timestamp}),
+        h('span', {text: isNaN(end.getTime()) ? '—' : clock(end), title: timeTip}),
         h('span', {text: r.requested_model || '—', title: r.request_id || null}),
         h('span', {text: r.upstream_model || '—', title: r.response_model ? '响应模型：' + r.response_model : null}),
         r.reasoning_level || '—',
@@ -378,7 +414,7 @@
     currentMatchIdx = (idx + currentMatches.length) % currentMatches.length;
     var cur = currentMatches[currentMatchIdx];
     cur.classList.add('active');
-    if (typeof cur.scrollIntoView === 'function') {
+    if (S.devOpen && typeof cur.scrollIntoView === 'function') {
       cur.scrollIntoView({ block: 'center', behavior: 'smooth' });
     }
     var countEl = document.getElementById('pm-log-search-count');
@@ -795,7 +831,7 @@
     // render() 会 clear 整个 sec 再重建，把搜索框那个 input 节点一起换掉，
     // 焦点和已输入的字符全丢。实测：刚开始输一个新词、还没匹配上时每一轮
     // 轮询都会换一次输入框，"prismTest!" 只落进 "pris"（匹配得上的词反而不丢）。
-    if (!box) { renderBody(); return; }
+    if (!box) { renderBody(); patchToolbar(); return; }
 
     if (appended.length) {
       var atBottom = atLogBottom();
@@ -845,17 +881,18 @@
     applyFilter();
     swap('#pm-notes', notes);
     swap('#pm-request-details', requestDetails);
-    var old = document.getElementById('pm-logview');
-    var oldWrap = old ? old.closest('.logview-wrap') : S.root.querySelector('.statebox');
-    if (oldWrap) oldWrap.parentNode.replaceChild(logView(), oldWrap);
+    var slot = document.getElementById('pm-logview-slot');
+    if (slot) { clear(slot); slot.appendChild(logView()); }
     swap('#pm-foot', footbar);
   }
 
   function atLogBottom() {
+    if (!S.devOpen) return true;
     var box = document.getElementById('pm-logview');
     return box ? (box.scrollHeight - box.scrollTop - box.clientHeight < 40) : true;
   }
   function scrollLogToEnd() {
+    if (!S.devOpen) return;
     var box = document.getElementById('pm-logview');
     if (box) box.scrollTop = box.scrollHeight;
   }
@@ -908,7 +945,7 @@
     // 而提示文案说的却是"可能有遗漏行"（复查轮 5 的 #C）。
     S.raw = []; S.filtered = []; S.hiddenCount = 0; S.errCount = 0;
     S.requests = []; S.requestError = '';
-    S.filterKey = ''; S.gap = false; S.err = null; S.unreadCount = 0;
+    S.filterKey = ''; S.gap = false; S.err = null; S.unreadCount = 0; S.devOpen = false;
     MOUNTED = false;
   }
 

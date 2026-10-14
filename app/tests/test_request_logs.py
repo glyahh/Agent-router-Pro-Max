@@ -98,5 +98,15 @@ class RequestLogTests(unittest.TestCase):
             logs.start(); self.assertIsNot(logs._worker, first)
             logs.stop(); self.assertFalse(logs._worker.is_alive())
 
+    def test_read_logs_collects_immediately(self):
+        import server
+        main_log = self.root / 'main.log'
+        main_log.write_text('[2026-10-14 19:00:00] [req-live] [info ] [gin_logger.go:103] 200\n', encoding='utf-8')
+        with patch.object(server, 'MAIN_LOG', main_log), \
+             patch.object(bridge, 'gateway_get', return_value=[record(request_id='req-live')]) as get:
+            payload = server.read_logs(50)
+            get.assert_called_once_with('usage-queue?count=256')
+        self.assertEqual(payload['requests'][0]['request_id'], 'req-live')
+
 
 if __name__ == '__main__': unittest.main()

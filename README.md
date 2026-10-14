@@ -26,7 +26,7 @@ Configuration adapters are available for **Codex, Claude Code, opencode and Herm
 **Requirements:** Windows 10/11 x64 and [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/).
 
 1. Download the Windows ZIP from [the latest release](https://github.com/glyahh/Agent-router-Pro-Max/releases/latest).
-2. Extract the entire ZIP into a writable folder. Keep `Prism.exe`, `_internal/`, `cli-proxy-api.exe` and `.runtime/` together. Prism creates `.runtime/` on first launch if it is missing.
+2. Extract the entire ZIP into a writable folder. Keep `Prism.exe`, `_internal/` and `cli-proxy-api.exe` together. Prism automatically creates `.runtime/` on first launch (do not bundle `.runtime/` in release archives, as it stores local credentials and history).
 3. Run `Prism.exe`.
 4. Add a source using your existing credentials, choose models and save routing.
 5. Preview the connection changes for your coding agent, then confirm. Restart the agent if its model list does not refresh.
@@ -62,7 +62,7 @@ Prism is [MIT licensed](LICENSE). The bundled gateway is [CLIProxyAPI](https://g
 
 ## 中文说明
 
-Prism 在 Windows 上统一管理模型来源、路由与编码代理端接入。完整解压发行包，保留 Prism.exe、_internal、cli-proxy-api.exe 和 .runtime，运行 Prism.exe，添加来源、保存路由，再预览并确认代理端接入。首次运行会创建 .runtime。
+Prism 在 Windows 上统一管理模型来源、路由与编码代理端接入。完整解压发行包，保留 `Prism.exe`、`_internal` 和 `cli-proxy-api.exe`，运行 `Prism.exe`，首次启动会自动创建空白的 `.runtime` 目录（切勿在发行包中附带本机 `.runtime` 目录，其中包含本地凭据与历史数据）。随后添加来源、保存路由，再预览并确认代理端接入。
 
 Cursor 首版仅 GPT：选择首页已启用、已暴露的模型；首次配置 ngrok 免费授权与 Cursor 的 URL、专用凭据和 prism-cursor 模型名。后续在 Prism 切换来源、模型和推理等级。真实 Cursor 的 Verify 与工具调用闭环尚未完成验收，不自动购买套餐。
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ctypes
 import logging
+import os
 import socket
 import subprocess
 import time
@@ -69,9 +70,14 @@ def ensure_gateway(wait: bool = True) -> str:
     if not config.is_file():
         return 'failed:找不到网关配置 ' + str(config)
     try:
+        # 显式传入 WRITABLE_PATH 指向 .runtime/，确保网关将 logs/main.log 与 error-*.log
+        # 写进运行数据目录，而不是写到 exe 所在根目录。
+        env = dict(os.environ)
+        env['WRITABLE_PATH'] = str(identity.ROOT)
         subprocess.Popen(
             [str(exe), '-config', str(config)],
             cwd=str(identity.ROOT),
+            env=env,
             # 隐藏窗口：桌面应用弹一个黑框很难看，而且用户会手动去关它
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
             stdin=subprocess.DEVNULL,

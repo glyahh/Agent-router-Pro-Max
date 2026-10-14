@@ -437,6 +437,11 @@ _FIRST_RUN_CONFIG = """\
 host: "127.0.0.1"
 port: 8317
 debug: false
+logging-to-file: true
+logs-max-total-size-mb: 32
+error-logs-max-files: 5
+request-log: false
+usage-statistics-enabled: true
 auth-dir: '%(auth_dir)s'
 remote-management:
   allow-remote: false
@@ -519,6 +524,7 @@ def ensure_first_run_files() -> list[str]:
             log.warning('模型模板初始化失败：%s', type(exc).__name__)
     try:
         (ROOT / 'auth').mkdir(parents=True, exist_ok=True)   # 网关的 auth-dir 指这里，缺失会让首次登录没地方落
+        (ROOT / 'logs').mkdir(parents=True, exist_ok=True)   # 网关日志与错误日志落盘目录
     except OSError:
         pass
     return created

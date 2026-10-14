@@ -667,7 +667,7 @@ def _clean_spec(spec, creating, groups=None, require_endpoint=True):
     head = str(spec.get('head') or '').strip()
     if head and not HEAD_RE.match(head):
         raise RouteError('渠道头「%s」不合法：只能用 %d 个字符以内的小写字母、数字、点、'
-                         '下划线、连字符，不能含斜杠或空格。例如 srapi、hub-main。'
+                         '下划线、连字符，不能含斜杠或空格。例如 primary、hub-main。'
                          % (head, HEAD_MAX))
     models, seen = [], set()
     for item in (spec.get('models') or []):
@@ -1109,7 +1109,7 @@ def set_head(source_id, head, agent):
     clean = str(head or '').strip()
     if clean and not HEAD_RE.match(clean):
         raise RouteError('渠道头「%s」不合法：只能用 %d 个字符以内的小写字母、数字、点、'
-                         '下划线、连字符，不能含斜杠或空格。例如 srapi、hub-main。'
+                         '下划线、连字符，不能含斜杠或空格。例如 primary、hub-main。'
                          % (clean, HEAD_MAX))
     with _Transaction():
         plan = _read_plan()
